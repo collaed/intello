@@ -134,6 +134,9 @@
       <option value="deep">🔬 Deep</option>
       <option value="debate">⚔️ Debate</option>
     </select>
+    <label style="display:flex;align-items:center;gap:4px;font-size:.8rem;color:var(--muted);cursor:pointer">
+      <input type="checkbox" id="streamToggle"> Stream
+    </label>
     <button class="provider-btn" onclick="openProviders()">Providers</button>
   </div>
 
@@ -222,6 +225,39 @@ async function send(confirmPaid, savedPrompt) {
 
   const btn = document.getElementById('sendBtn'); btn.disabled = true;
   const loading = addMsg('system', '⏳ Thinking...');
+
+  // Streaming mode
+  if (document.getElementById('streamToggle').checked && !confirmPaid) {
+    try {
+      const r = await fetch('/v1/chat/completions/stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({messages: [{role: 'user', content: text}], max_tokens: 4096}),
+      });
+      chatInner.removeChild(loading);
+      const msgEl = addMsg('assistant', '');
+      const contentEl = msgEl.querySelector('.content');
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        for (const line of chunk.split('\n')) {
+          if (line.startsWith('data: ')) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              if (d.content) { fullText += d.content; contentEl.textContent = fullText; chatEl.scrollTop = chatEl.scrollHeight; }
+              if (d.done && d.provider) { msgEl.innerHTML += `<div class="meta"><span class="model">${d.provider}</span> · ${d.model || ''} · streamed</div>`; }
+            } catch(e) {}
+          }
+        }
+      }
+    } catch(e) { chatInner.removeChild(loading); addMsg('system', `❌ ${esc(e.message)}`); }
+    btn.disabled = false;
+    return;
+  }
 
   try {
     const r = await fetch('/api/prompt', { method: 'POST', body: fd });

@@ -37,6 +37,7 @@ from intello import ocr_engines
 from intello import scheduler
 from intello import imagegen
 from intello import webhooks
+from intello import reconstruct as recon
 
 app = FastAPI(title="L'Intello")
 
@@ -886,6 +887,58 @@ async def api_literary_reject_edit(doc_id: str, edit_id: int):
     return {"ok": True}
 
 
+@app.post("/api/literary/{doc_id}/append")
+async def api_literary_append(doc_id: str, text: str = Form(...)):
+    """Append text to a document (from workflow output, etc.)."""
+    info = literary.get_document_info(doc_id)
+    if not info:
+        return {"error": "Document not found"}
+    current = literary.get_full_text(doc_id)
+    new_text = current + "\n\n" + text
+    # Re-ingest with appended content
+    result = literary.ingest_document(doc_id, new_text, info["title"],
+                                      info.get("project_id", ""))
+    return result
+
+
+@app.get("/api/literary/{doc_id}/export/docx")
+async def api_literary_export_docx(doc_id: str):
+    """Export document as DOCX."""
+    info = literary.get_document_info(doc_id)
+    if not info:
+        return Response("Not found", status_code=404)
+
+    from docx import Document as DocxDocument
+    from docx.shared import Pt
+    import tempfile
+
+    doc = DocxDocument()
+    doc.add_heading(info["title"], 0)
+
+    with literary._db() as conn:
+        lines = conn.execute("SELECT line_num, text, chapter FROM lines WHERE doc_id=? ORDER BY line_num",
+                             (doc_id,)).fetchall()
+
+    current_chapter = ""
+    for line in lines:
+        if line["chapter"] != current_chapter:
+            current_chapter = line["chapter"]
+            doc.add_heading(current_chapter, level=1)
+        elif line["text"].strip():
+            doc.add_paragraph(line["text"])
+
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
+        doc.save(f.name)
+        tmp = f.name
+
+    with open(tmp, "rb") as f:
+        content = f.read()
+    os.unlink(tmp)
+
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{info["title"]}.docx"'})
+
+
 @app.get("/api/literary/{doc_id}/export", response_class=HTMLResponse)
 async def api_literary_export(doc_id: str):
     """Generate a rich, editable HTML report of the full literary analysis."""
@@ -1547,6 +1600,122 @@ async def api_webhook_trigger(hook_id: str, request: Request):
 async def api_webhook_delete(hook_id: str):
     webhooks.delete_webhook(hook_id)
     return {"ok": True}
+
+
+# --- Version Reconstruction (#9) ---
+
+@app.get("/api/reconstruct/projects")
+async def api_recon_projects():
+    return recon.list_version_projects()
+
+
+@app.post("/api/reconstruct/projects")
+async def api_recon_create(name: str = Form(...)):
+    import uuid as _uuid
+    pid = name.replace(" ", "_").lower()[:30] + f"_{int(time.time())}"
+    return recon.create_version_project(pid, name)
+
+
+@app.post("/api/reconstruct/{project_id}/ingest")
+async def api_recon_ingest(project_id: str, file: UploadFile = File(...)):
+    content = (await file.read()).decode("utf-8", errors="replace")
+    return recon.ingest_version(project_id, file.filename, content)
+
+
+@app.get("/api/reconstruct/{project_id}/versions")
+async def api_recon_versions(project_id: str):
+    return recon.get_project_versions(project_id)
+
+
+@app.post("/api/reconstruct/{project_id}/rebuild")
+async def api_recon_rebuild(project_id: str):
+    return recon.reconstruct(project_id)
+
+
+@app.get("/api/reconstruct/{project_id}/text")
+async def api_recon_text(project_id: str):
+    text = recon.get_reconstructed_text(project_id)
+    return Response(text, media_type="text/plain")
+
+
+@app.post("/api/reconstruct/{project_id}/smooth")
+async def api_recon_smooth(project_id: str):
+    """Use LLM to smooth transitions between sections from different versions."""
+    text = recon.get_reconstructed_text(project_id)
+    if not text:
+        return {"error": "No reconstructed text"}
+
+    prompt = f"""This document was reconstructed from multiple versions. Some sections may have inconsistent tone, tense, or style.
+
+Review the transitions between sections and suggest specific edits to make it read as one cohesive document.
+For each issue, specify the exact text to change.
+
+DOCUMENT:
+{text[:8000]}
+
+List issues and fixes:"""
+
+    plan = build_plan(prompt, _providers)
+    if not plan.primary:
+        return {"error": "No providers"}
+    result = await execute(plan.primary, prompt, max_tokens=4000)
+    return {"suggestions": result.content, "provider": result.provider_name}
+
+
+# --- Backup/Restore (#7) ---
+
+@app.get("/api/backup")
+async def api_backup():
+    """Download all SQLite databases as a tar archive."""
+    import tarfile, io
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for db_name in ["api_keys.json", "usage.json", "memory.db", "cache.db",
+                        "literary.db", "scheduler.db", "webhooks.db", "versions.db"]:
+            path = f"/data/{db_name}"
+            if os.path.exists(path):
+                tar.add(path, arcname=db_name)
+    buf.seek(0)
+    return Response(buf.read(), media_type="application/gzip",
+                    headers={"Content-Disposition": "attachment; filename=intello_backup.tar.gz"})
+
+
+# --- Rate Limit Dashboard (#8) ---
+
+@app.get("/api/usage/history")
+async def api_usage_history():
+    """Get usage history across all providers."""
+    from intello import ratelimit
+    usage = ratelimit._load()
+    result = {}
+    for day, models in usage.items():
+        result[day] = models
+    # Also add current remaining
+    current = {}
+    for p in _providers:
+        if p.available:
+            rem = ratelimit.remaining(p.model_id, p.daily_limit)
+            current[p.model_id] = {"name": p.name, "used": ratelimit.get_usage(p.model_id),
+                                    "limit": p.daily_limit, "remaining": rem}
+    return {"history": result, "today": current}
+
+
+# --- Prompt Templates (#6) ---
+
+PROMPT_TEMPLATES = {
+    "analyze_pacing": {"name": "Analyze Pacing", "prompt": "Analyze the pacing of chapter {chapter}. Where is it too slow or fast?"},
+    "character_check": {"name": "Character Consistency", "prompt": "Check {character} for consistency across all chapters. Flag any contradictions."},
+    "show_not_tell": {"name": "Show Not Tell", "prompt": "Find all instances of telling instead of showing in chapter {chapter} and rewrite them."},
+    "tighten_prose": {"name": "Tighten Prose", "prompt": "Tighten the prose in lines {start}-{end}. Remove unnecessary words, strengthen verbs."},
+    "expand_scene": {"name": "Expand Scene", "prompt": "Expand the scene at lines {start}-{end} with more sensory detail and character interiority."},
+    "blurb": {"name": "Generate Blurb", "prompt": "Write a compelling back-cover blurb for this book."},
+    "chapter_summary": {"name": "Chapter Summary", "prompt": "Summarize each chapter in one sentence."},
+}
+
+
+@app.get("/api/templates")
+async def api_templates():
+    return PROMPT_TEMPLATES
 
 
 # --- Scheduler background loop ---
