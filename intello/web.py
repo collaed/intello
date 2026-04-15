@@ -531,27 +531,50 @@ async def api_literary_ingest(
     gdrive_url: Optional[str] = Form(None),
     project_id: Optional[str] = Form(""),
 ):
-    """Ingest a document for literary analysis."""
-    content = ""
+    """Ingest a document for literary analysis. Supports .txt, .md, .pdf, .epub."""
+    import tempfile
     fname = title
+    doc_id = None
+
     if file and file.filename:
-        content = (await file.read()).decode("utf-8", errors="replace")
         fname = fname or file.filename
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        doc_id = fname.replace(" ", "_").lower()[:40] + f"_{int(time.time())}"
+
+        if ext == "pdf":
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(await file.read())
+                tmp = f.name
+            result = literary.ingest_pdf(doc_id, tmp, fname, project_id or "")
+            os.unlink(tmp)
+            return result
+        elif ext == "epub":
+            with tempfile.NamedTemporaryFile(suffix=".epub", delete=False) as f:
+                f.write(await file.read())
+                tmp = f.name
+            result = literary.ingest_epub(doc_id, tmp, fname, project_id or "")
+            os.unlink(tmp)
+            return result
+        else:
+            content = (await file.read()).decode("utf-8", errors="replace")
     elif text:
         content = text
+        fname = fname or "pasted_text"
     elif gdrive_url and gdrive_url.strip():
         if gdrive.is_authenticated():
             content = gdrive.fetch_private(gdrive_url.strip())
         else:
             content = await gdrive.fetch_public(gdrive_url.strip())
         fname = fname or "gdrive_doc"
+    else:
+        return {"error": "No content provided"}
 
     if not content or len(content) < 50:
-        return {"error": "No content provided or content too short"}
+        return {"error": "Content too short (min 50 chars)"}
 
-    doc_id = fname.replace(" ", "_").lower()[:40] + f"_{int(time.time())}"
-    result = literary.ingest_document(doc_id, content, fname, project_id or "")
-    return result
+    if not doc_id:
+        doc_id = fname.replace(" ", "_").lower()[:40] + f"_{int(time.time())}"
+    return literary.ingest_document(doc_id, content, fname, project_id or "")
 
 
 @app.get("/api/literary/documents")

@@ -134,9 +134,9 @@
     </div>
 
     <div class="upload-area" onclick="document.getElementById('fileUp').click()">
-      <input type="file" id="fileUp" accept=".txt,.md,.html,.rtf">
+      <input type="file" id="fileUp" accept=".txt,.md,.html,.rtf,.pdf,.epub">
       <p>📄 Drop a document or click to upload</p>
-      <p style="color:var(--muted);font-size:.8rem;margin-top:8px">Supports .txt, .md — or paste text below</p>
+      <p style="color:var(--muted);font-size:.8rem;margin-top:8px">Supports .txt, .md, .pdf, .epub — or paste text below</p>
     </div>
     <textarea id="pasteArea" placeholder="Or paste your text here..." rows="4"></textarea>
     <div style="display:flex;gap:8px;margin-top:8px">
@@ -377,20 +377,36 @@ async function loadDocList() {
 document.getElementById('fileUp').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (file) {
-    document.getElementById('pasteArea').value = await file.text();
-    document.getElementById('docTitle').value = file.name.replace(/\.[^.]+$/, '');
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'pdf' || ext === 'epub') {
+      // Upload binary file directly
+      document.getElementById('docTitle').value = file.name.replace(/\.[^.]+$/, '');
+      window._pendingFile = file;
+      document.getElementById('pasteArea').value = `[${ext.toUpperCase()} file: ${file.name} — click Ingest to process]`;
+    } else {
+      document.getElementById('pasteArea').value = await file.text();
+      document.getElementById('docTitle').value = file.name.replace(/\.[^.]+$/, '');
+      window._pendingFile = null;
+    }
   }
 });
 
 async function uploadDoc() {
-  const text = document.getElementById('pasteArea').value;
   const title = document.getElementById('docTitle').value || 'Untitled';
   const projectId = document.getElementById('docProject').value;
-  if (!text || text.length < 50) { alert('Text too short'); return; }
   const fd = new FormData();
-  fd.append('text', text);
   fd.append('title', title);
   if (projectId) fd.append('project_id', projectId);
+
+  if (window._pendingFile) {
+    fd.append('file', window._pendingFile);
+    window._pendingFile = null;
+  } else {
+    const text = document.getElementById('pasteArea').value;
+    if (!text || text.length < 50) { alert('Text too short'); return; }
+    fd.append('text', text);
+  }
+
   const r = await fetch('/api/literary/ingest', { method: 'POST', body: fd });
   const data = await r.json();
   if (data.error) { alert(data.error); return; }

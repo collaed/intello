@@ -296,23 +296,37 @@ def ingest_document(doc_id: str, text: str, title: str = "", project_id: str = "
                 chunk_lines = []
                 chunk_start = i + 1
 
-        # Compute pacing metrics per line
+        # Compute pacing metrics per line using textstat + heuristics
+        import textstat
         for i, line in enumerate(raw_lines, 1):
             words = line.split()
-            sentences = re.split(r'[.!?]+', line)
-            sentences = [s for s in sentences if s.strip()]
+            if not words:
+                conn.execute("INSERT INTO pacing (doc_id, line_num, sentence_len, word_len, dialogue, tension) VALUES (?,?,?,?,?,?)",
+                             (doc_id, i, 0, 0, 0, 0))
+                continue
 
-            avg_sent_len = len(words) / max(len(sentences), 1)
-            avg_word_len = sum(len(w) for w in words) / max(len(words), 1)
-            is_dialogue = 1 if re.search(r'["""\'].*?["""\']', line) or line.strip().startswith(('-', '—', '"', '"')) else 0
+            # Readability as proxy for complexity
+            try:
+                reading_ease = textstat.flesch_reading_ease(line) if len(words) > 5 else 50
+            except Exception:
+                reading_ease = 50
 
-            # Tension heuristic: short sentences + action words = high tension
+            avg_word_len = sum(len(w) for w in words) / len(words)
+            is_dialogue = 1 if re.search(r'["""\u201c\u201d\'].*?["""\u201c\u201d\']', line) or line.strip().startswith(('-', '\u2014', '"', '\u201c')) else 0
+
+            # Tension: short sentences + action words + low reading ease
             tension_words = {"suddenly", "screamed", "ran", "blood", "death", "fire", "crash",
                              "fight", "knife", "gun", "dark", "fear", "heart", "fast", "broke",
-                             "slammed", "shouted", "exploded", "silence", "shadow"}
+                             "slammed", "shouted", "exploded", "silence", "shadow", "gasped",
+                             "froze", "shattered", "ripped", "lunged", "collapsed", "trembled"}
             tension = sum(1 for w in words if w.lower().strip(".,!?") in tension_words)
+            # Short lines with many words = punchy = tense
+            avg_sent_len = len(words)  # approximate for single line
             if avg_sent_len < 8 and len(words) > 3:
-                tension += 1  # Short punchy sentences = tension
+                tension += 1
+            # Low reading ease = complex/tense prose
+            if reading_ease < 30 and len(words) > 5:
+                tension += 0.5
 
             conn.execute("INSERT INTO pacing (doc_id, line_num, sentence_len, word_len, dialogue, tension) VALUES (?,?,?,?,?,?)",
                          (doc_id, i, avg_sent_len, avg_word_len, is_dialogue, tension))
@@ -452,65 +466,18 @@ def reject_edit(edit_id: int):
 # --- Character Extraction ---
 
 def extract_characters(doc_id: str) -> list[dict]:
-    """Extract character names from the document using capitalized proper noun patterns."""
-    with _db() as conn:
-        rows = conn.execute("SELECT line_num, text FROM lines WHERE doc_id=? ORDER BY line_num", (doc_id,)).fetchall()
+    """Extract character names using spaCy NER."""
+    from . import nlp as nlp_mod
 
-    # Find capitalized words that appear multiple times (likely character names)
-    name_counts: dict[str, list[int]] = {}
-    stop_words = {"the", "this", "that", "then", "there", "their", "they", "when", "where",
-                  "what", "which", "with", "from", "into", "upon", "after", "before", "about",
-                  "chapter", "part", "act", "scene", "said", "asked", "replied", "thought",
-                  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-                  "january", "february", "march", "april", "may", "june", "july", "august",
-                  "september", "october", "november", "december", "but", "and", "for", "not",
-                  "she", "her", "his", "him", "he", "its", "our", "your", "who", "how", "why",
-                  "every", "each", "some", "any", "all", "both", "few", "many", "much", "own",
-                  "just", "even", "still", "also", "very", "too", "yet", "now", "here",
-                  "been", "being", "have", "has", "had", "was", "were", "are", "will",
-                  "would", "could", "should", "might", "must", "shall", "may", "can",
-                  "let", "like", "make", "take", "come", "give", "look", "think", "know",
-                  "want", "tell", "turn", "keep", "leave", "call", "try", "ask", "need",
-                  "seem", "feel", "become", "begin", "show", "hear", "play", "run", "move",
-                  "live", "believe", "bring", "happen", "write", "sit", "stand", "lose",
-                  "pay", "meet", "include", "continue", "set", "learn", "change", "lead",
-                  "understand", "watch", "follow", "stop", "speak", "read", "spend", "grow",
-                  "open", "walk", "win", "teach", "offer", "remember", "love", "consider",
-                  "appear", "buy", "wait", "serve", "die", "send", "build", "stay", "fall",
-                  "cut", "reach", "kill", "remain", "suggest", "raise", "pass", "sell",
-                  "require", "report", "decide", "pull", "develop", "nothing", "something",
-                  "everything", "anything", "someone", "everyone", "anyone", "nobody",
-                  "night", "morning", "dawn", "day", "time", "road", "light", "dark"}
-
-    for row in rows:
-        # Find capitalized words not at sentence start
-        words = row["text"].split()
-        for i, w in enumerate(words):
-            clean = re.sub(r'[^a-zA-Z]', '', w)
-            if (clean and clean[0].isupper() and len(clean) > 1
-                    and clean.lower() not in stop_words):
-                # Skip if it's the first word after sentence-ending punctuation
-                if i > 0 or (i == 0 and row["line_num"] > 1):
-                    name_counts.setdefault(clean, []).append(row["line_num"])
-
-    # Filter: must appear 3+ times to be a character
-    characters = []
-    for name, lines in sorted(name_counts.items(), key=lambda x: -len(x[1])):
-        if len(lines) >= 3:
-            characters.append({
-                "name": name,
-                "mentions": len(lines),
-                "first_appearance": min(lines),
-                "last_appearance": max(lines),
-                "lines": sorted(set(lines)),
-            })
+    full_text = get_full_text(doc_id)
+    characters = nlp_mod.extract_characters(full_text)
 
     # Store in doc_map
     with _db() as conn:
         conn.execute("DELETE FROM doc_map WHERE doc_id=? AND entity_type='character'", (doc_id,))
         for ch in characters:
             conn.execute("INSERT INTO doc_map (doc_id, entity_type, entity_id, start_line, end_line, metadata) VALUES (?,?,?,?,?,?)",
-                         (doc_id, "character", f"char_{ch['name'].lower()}",
+                         (doc_id, "character", f"char_{ch['name'].lower().replace(' ','_')}",
                           ch["first_appearance"], ch["last_appearance"],
                           json.dumps({"name": ch["name"], "mentions": ch["mentions"], "lines": ch["lines"][:50]})))
 
@@ -539,6 +506,49 @@ def get_text_range(doc_id: str, start: int, end: int) -> str:
         rows = conn.execute("SELECT text FROM lines WHERE doc_id=? AND line_num BETWEEN ? AND ? ORDER BY line_num",
                             (doc_id, start, end)).fetchall()
     return "\n".join(r["text"] for r in rows)
+
+
+# --- PDF/EPUB Ingestion ---
+
+def ingest_pdf(doc_id: str, pdf_path: str, title: str = "", project_id: str = "") -> dict:
+    """Ingest a PDF file — extract text via pymupdf, then process as document."""
+    import fitz  # pymupdf
+    doc = fitz.open(pdf_path)
+    pages = []
+    for page in doc:
+        pages.append(page.get_text())
+    doc.close()
+    text = "\n\n".join(pages)
+    return ingest_document(doc_id, text, title or pdf_path, project_id)
+
+
+def ingest_epub(doc_id: str, epub_path: str, title: str = "", project_id: str = "") -> dict:
+    """Ingest an EPUB file — extract text, then process as document."""
+    import zipfile
+    from html.parser import HTMLParser
+
+    class _Strip(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.parts = []
+        def handle_data(self, d):
+            self.parts.append(d)
+        def get_text(self):
+            return "".join(self.parts)
+
+    text_parts = []
+    with zipfile.ZipFile(epub_path) as z:
+        for name in sorted(z.namelist()):
+            if name.endswith((".xhtml", ".html", ".htm")):
+                html = z.read(name).decode("utf-8", errors="replace")
+                s = _Strip()
+                s.feed(html)
+                t = s.get_text().strip()
+                if t:
+                    text_parts.append(t)
+
+    text = "\n\n".join(text_parts)
+    return ingest_document(doc_id, text, title or epub_path, project_id)
 
 
 # --- Narrative Threads / Open Questions ---
