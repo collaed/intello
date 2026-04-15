@@ -52,9 +52,10 @@ def test_models_endpoint():
 
 def test_providers_endpoint():
     r = client.get("/api/providers", headers=HEADERS)
-    assert r.status_code == 200
-    assert isinstance(r.json(), list)
-    print(f"✅ GET /api/providers → {len(r.json())} providers")
+    assert r.status_code == 200, f"Status {r.status_code}"
+    data = r.json()
+    assert isinstance(data, list), f"Expected list, got {type(data)}"
+    print(f"✅ GET /api/providers → {len(data)} providers")
 
 
 def test_literary_ingest():
