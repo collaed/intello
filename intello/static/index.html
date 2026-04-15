@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L'Intello</title>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
+           --muted: #71717a; --accent: #6366f1; --green: #22c55e; --red: #ef4444;
+           --yellow: #eab308; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex;
+           align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.2rem; }
+  header h1 span { color: var(--accent); }
+  #providerBtn { background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+                  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: .85rem; }
+  #providerBtn:hover { color: var(--text); border-color: var(--accent); }
+
+  #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { max-width: 780px; width: 100%; margin: 0 auto; padding: 16px; border-radius: 10px;
+         line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; font-size: .95rem; }
+  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; border-radius: 10px 10px 2px 10px; }
+  .msg.system { background: var(--surface); border: 1px solid var(--border); }
+  .msg.plan { background: #1e1b2e; border: 1px solid #3730a3; font-size: .85rem; }
+  .msg.error { background: #2a1215; border: 1px solid var(--red); color: #fca5a5; }
+  .msg .label { font-size: .75rem; color: var(--muted); margin-bottom: 6px; display: block; }
+  .msg .cost { color: var(--yellow); }
+  .msg .model { color: var(--green); font-weight: 600; }
+  .confirm-bar { display: flex; gap: 8px; margin-top: 10px; }
+  .confirm-bar button { padding: 6px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: .85rem; }
+  .confirm-bar .yes { background: var(--green); color: #000; }
+  .confirm-bar .no { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  #inputArea { padding: 16px 24px; border-top: 1px solid var(--border); }
+  #inputRow { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  #prompt { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+            padding: 12px; border-radius: 8px; font-size: .95rem; resize: none; min-height: 48px;
+            max-height: 200px; font-family: inherit; outline: none; }
+  #prompt:focus { border-color: var(--accent); }
+  #prompt::placeholder { color: var(--muted); }
+  .icon-btn { background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+              width: 42px; height: 42px; border-radius: 8px; cursor: pointer; display: flex;
+              align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0; }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
+  #sendBtn { background: var(--accent); border: none; color: #fff; width: 42px; height: 42px;
+             border-radius: 8px; cursor: pointer; font-size: 1.2rem; flex-shrink: 0; }
+  #sendBtn:disabled { opacity: .4; cursor: default; }
+  #attachInfo { max-width: 780px; margin: 6px auto 0; font-size: .8rem; color: var(--muted); display: flex;
+                gap: 12px; align-items: center; }
+  #attachInfo .tag { background: var(--surface); border: 1px solid var(--border); padding: 2px 8px;
+                     border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  #attachInfo .tag .x { cursor: pointer; color: var(--red); }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+              align-items: center; justify-content: center; z-index: 10; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+           padding: 24px; width: 500px; max-height: 80vh; overflow-y: auto; }
+  .modal h2 { font-size: 1rem; margin-bottom: 16px; }
+  .modal table { width: 100%; font-size: .85rem; border-collapse: collapse; }
+  .modal td, .modal th { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  .modal .close { float: right; cursor: pointer; color: var(--muted); font-size: 1.2rem; }
+  .modal input[type=text] { width: 100%; background: var(--bg); border: 1px solid var(--border);
+                             color: var(--text); padding: 8px; border-radius: 6px; margin: 4px 0; font-size: .85rem; }
+  .modal .add-key-btn { background: var(--accent); color: #fff; border: none; padding: 6px 14px;
+                        border-radius: 6px; cursor: pointer; margin-top: 4px; font-size: .85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ <span>L'Intello</span></h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span id="gdriveStatus" style="font-size:.8rem;color:var(--muted)"></span>
+    <button class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem" onclick="openConversations()">💬</button>
+    <button class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem" onclick="newConversation()">➕</button>
+    <a href="/literary" class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem;text-decoration:none">📚</a>
+    <button id="providerBtn" onclick="openProviders()">Providers</button>
+  </div>
+</header>
+
+<div id="chat"></div>
+
+<div id="inputArea">
+  <div id="inputRow">
+    <label class="icon-btn" title="Attach file">📎<input type="file" id="fileInput" hidden></label>
+    <button class="icon-btn" title="Google Drive URL" onclick="promptGDrive()">🔗</button>
+    <select id="modeSelect" title="Processing mode" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:6px 8px;border-radius:8px;font-size:.85rem;cursor:pointer;">
+      <option value="auto">⚡ Auto</option>
+      <option value="fast">🏃 Fast</option>
+      <option value="deep">🔬 Deep</option>
+      <option value="debate">⚔️ Debate</option>
+    </select>
+    <textarea id="prompt" rows="1" placeholder="Ask anything…" onkeydown="handleKey(event)"></textarea>
+    <button id="sendBtn" onclick="send()">➤</button>
+  </div>
+  <div id="attachInfo"></div>
+</div>
+
+<!-- Provider modal -->
+<div class="modal-bg" id="providerModal">
+  <div class="modal">
+    <span class="close" onclick="closeProviders()">✕</span>
+    <h2>Providers</h2>
+    <div id="providerList"></div>
+    <hr style="border-color:var(--border);margin:16px 0">
+    <h2>Add API Key</h2>
+    <input type="text" id="keyName" placeholder="ENV variable, e.g. GROQ_API_KEY">
+    <input type="text" id="keyValue" placeholder="Key value">
+    <button class="add-key-btn" onclick="addKey()">Add Key</button>
+  </div>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const promptEl = document.getElementById('prompt');
+const fileInput = document.getElementById('fileInput');
+const attachInfo = document.getElementById('attachInfo');
+let attachedFile = null;
+let gdriveUrl = '';
+let gdriveAuth = false;
+let conversationId = null;
+
+// Check GDrive status on load
+fetch('/api/gdrive/status').then(r=>r.json()).then(d => {
+  gdriveAuth = d.authenticated;
+  const el = document.getElementById('gdriveStatus');
+  if (d.authenticated) el.innerHTML = '🟢 GDrive';
+  else if (d.configured) el.innerHTML = '<a href="/api/gdrive/auth" style="color:var(--yellow)">🔑 GDrive</a>';
+});
+
+function newConversation() { conversationId = null; chat.innerHTML = ''; addMsg('system','New conversation started.'); }
+
+async function openConversations() {
+  const r = await fetch('/api/conversations');
+  const convs = await r.json();
+  let html = '<b>Recent conversations:</b><br><br>';
+  for (const c of convs) {
+    const d = new Date(c.created_at*1000).toLocaleString();
+    const summary = c.summary ? c.summary.substring(0,80)+'…' : '(no summary)';
+    html += `<div style="cursor:pointer;padding:6px;border-bottom:1px solid var(--border)" onclick="loadConversation('${c.id}')">`
+         + `<span style="color:var(--accent)">${d}</span><br><span style="color:var(--muted);font-size:.85rem">${esc(summary)}</span></div>`;
+  }
+  if (!convs.length) html += '<span style="color:var(--muted)">No conversations yet.</span>';
+  addMsg('system', html);
+}
+
+async function loadConversation(id) {
+  conversationId = id;
+  chat.innerHTML = '';
+  const r = await fetch(`/api/conversations/${id}`);
+  const data = await r.json();
+  if (data.summary) addMsg('plan', '<span class="label">📝 Summary</span>' + esc(data.summary));
+  for (const m of data.messages) {
+    addMsg(m.role === 'user' ? 'user' : 'system', esc(m.content));
+  }
+}
+
+// Auto-resize textarea
+promptEl.addEventListener('input', () => {
+  promptEl.style.height = 'auto';
+  promptEl.style.height = Math.min(promptEl.scrollHeight, 200) + 'px';
+});
+
+fileInput.addEventListener('change', () => {
+  attachedFile = fileInput.files[0] || null;
+  renderAttach();
+});
+
+function promptGDrive() {
+  if (!gdriveAuth) {
+    // Not authenticated — offer to connect or paste public link
+    const choice = window.confirm('Google Drive not connected.\n\nOK = Connect (OAuth)\nCancel = Paste a public link instead');
+    if (choice) { window.location.href = '/api/gdrive/auth'; return; }
+  }
+  const url = window.prompt('Paste a Google Drive sharing link:');
+  if (url) { gdriveUrl = url; renderAttach(); }
+}
+
+function renderAttach() {
+  let html = '';
+  if (attachedFile) html += `<span class="tag">📄 ${attachedFile.name} <span class="x" onclick="removeFile()">✕</span></span>`;
+  if (gdriveUrl) html += `<span class="tag">🔗 GDrive <span class="x" onclick="removeGDrive()">✕</span></span>`;
+  attachInfo.innerHTML = html;
+}
+function removeFile() { attachedFile = null; fileInput.value = ''; renderAttach(); }
+function removeGDrive() { gdriveUrl = ''; renderAttach(); }
+
+function addMsg(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = html;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+}
+
+async function send(confirmPaid = false, savedPrompt = null) {
+  const text = savedPrompt || promptEl.value.trim();
+  if (!text && !confirmPaid) return;
+
+  if (!confirmPaid) {
+    addMsg('user', esc(text) + attachBadges());
+    promptEl.value = ''; promptEl.style.height = 'auto';
+  }
+
+  const fd = new FormData();
+  fd.append('prompt', text);
+  fd.append('confirm_paid', confirmPaid ? 'true' : 'false');
+  fd.append('mode', document.getElementById('modeSelect').value);
+  if (conversationId) fd.append('conversation_id', conversationId);
+  if (attachedFile) fd.append('file', attachedFile);
+  if (gdriveUrl) fd.append('gdrive_url', gdriveUrl);
+
+  if (!confirmPaid) { attachedFile = null; gdriveUrl = ''; fileInput.value = ''; renderAttach(); }
+
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  const loading = addMsg('system', '<span class="label">Routing…</span>⏳');
+
+  try {
+    const r = await fetch('/api/prompt', { method: 'POST', body: fd });
+    const data = await r.json();
+    chat.removeChild(loading);
+
+    // Show plan
+    addMsg('plan', '<span class="label">📋 Routing Plan</span>' + esc(data.plan.reasoning));
+
+    // Track conversation
+    if (data.plan.conversation_id) conversationId = data.plan.conversation_id;
+
+    if (data.needs_confirmation) {
+      const bar = addMsg('system',
+        `<span class="cost">⚠ Paid model: ${esc(data.plan.primary)} — estimated $${data.plan.estimated_cost.toFixed(6)}</span>` +
+        `<div class="confirm-bar"><button class="yes" onclick="confirmPaid('${esc(text)}')">Proceed</button>` +
+        `<button class="no" onclick="this.parentElement.parentElement.remove()">Cancel</button></div>`);
+      window._pendingPrompt = text;
+    } else if (data.error) {
+      addMsg('error', esc(data.error));
+    } else if (data.response) {
+      // Show pipeline details if deep mode
+      if (data.pipeline) {
+        let pipeHtml = '<span class="label">🔬 Deep Pipeline</span>';
+        for (const s of data.pipeline.steps) pipeHtml += esc(s) + '\n';
+        pipeHtml += '\n<details><summary style="cursor:pointer;color:var(--accent)">Show drafts & review</summary>\n';
+        for (const d of data.pipeline.drafts) {
+          if (!d.degraded) pipeHtml += `\n<b>${esc(d.provider)}</b> ($${d.cost.toFixed(6)}):\n${esc(d.content).substring(0, 500)}…\n`;
+        }
+        if (data.pipeline.reviews.length) {
+          pipeHtml += `\n<b>Review (${esc(data.pipeline.reviews[0].provider)}):</b>\n${esc(data.pipeline.reviews[0].content)}\n`;
+        }
+        pipeHtml += '</details>';
+        addMsg('plan', pipeHtml);
+      }
+      // Show debate
+      if (data.debate) {
+        let debHtml = '<span class="label">⚔️ Debate</span>';
+        for (const s of data.debate.log) debHtml += esc(s) + '\n';
+        debHtml += '\n<details><summary style="cursor:pointer;color:var(--accent)">Show positions & challenges</summary>\n';
+        for (const p of data.debate.positions) {
+          if (!p.degraded) debHtml += `\n<b>📢 ${esc(p.model)}</b>:\n${esc(p.content).substring(0,600)}…\n`;
+        }
+        for (const c of data.debate.challenges) {
+          if (!c.degraded) debHtml += `\n<b>🗡️ ${esc(c.challenger)}</b>:\n${esc(c.content).substring(0,600)}…\n`;
+        }
+        debHtml += '</details>';
+        addMsg('plan', debHtml);
+      }
+      // Show chain steps
+      if (data.chain_steps) {
+        let chainHtml = '<span class="label">🔗 Chain Execution</span>';
+        for (const s of data.chain_steps) {
+          const icon = s.degraded || s.error ? '❌' : '✅';
+          chainHtml += `\n${icon} Step ${s.step}: ${esc(s.task)}`;
+          if (s.provider) chainHtml += ` → ${esc(s.provider)}`;
+        }
+        addMsg('plan', chainHtml);
+      }
+      // Show tool usage
+      if (data.tool_used) {
+        addMsg('plan', `<span class="label">🔧 Tool Used</span>${esc(data.tool_used.tool)}(${esc(JSON.stringify(data.tool_used.args))})`);
+      }
+      // Show guardrail warnings
+      if (data.guardrails && data.guardrails.issues.length) {
+        addMsg('plan', `<span class="label" style="color:var(--yellow)">⚠️ Confidence: ${(data.guardrails.confidence*100).toFixed(0)}%</span>${data.guardrails.issues.map(i => esc(i)).join(', ')}`);
+      }
+      const mid = data.response.model;
+      const tt = data.plan.task_type;
+      addMsg('system',
+        `<span class="label"><span class="model">${esc(data.response.provider)}</span> · ${esc(mid)} · ` +
+        `tokens ${data.response.input_tokens}→${data.response.output_tokens} · ` +
+        `<span class="cost">$${data.response.cost.toFixed(6)}</span>` +
+        `${data.mode === 'deep' ? ' · 🔬 deep' : ''}</span>` +
+        esc(data.response.content) +
+        `\n<div style="margin-top:8px;display:flex;gap:4px">` +
+        [1,2,3,4,5].map(n =>
+          `<button onclick="sendFeedback('${esc(mid)}','${esc(tt)}',${n});this.parentElement.innerHTML='✅ Rated ${n}/5'" `+
+          `style="background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:.75rem">${'⭐'.repeat(n)}</button>`
+        ).join('') + `</div>`);
+    }
+  } catch (e) {
+    chat.removeChild(loading);
+    addMsg('error', 'Request failed: ' + esc(e.message));
+  }
+  sendBtn.disabled = false;
+}
+
+function confirmPaid() { send(true, window._pendingPrompt); }
+
+async function sendFeedback(modelId, taskType, rating) {
+  const fd = new FormData();
+  fd.append('model_id', modelId);
+  fd.append('task_type', taskType);
+  fd.append('rating', rating);
+  await fetch('/api/feedback', { method: 'POST', body: fd });
+}
+
+function attachBadges() {
+  let s = '';
+  if (attachedFile) s += ` <span style="font-size:.8rem;opacity:.7">📎 ${esc(attachedFile.name)}</span>`;
+  if (gdriveUrl) s += ' <span style="font-size:.8rem;opacity:.7">🔗 GDrive</span>';
+  return s;
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// Providers modal
+async function openProviders() {
+  document.getElementById('providerModal').classList.add('open');
+  const r = await fetch('/api/providers');
+  const providers = await r.json();
+  let html = '<table><tr><th>Provider</th><th>Tier</th><th>Status</th><th>Key</th><th>Quota</th></tr>';
+  for (const p of providers) {
+    const tier = p.tier === 'free' ? '🆓' : '💰';
+    const status = p.available ? '<span style="color:var(--green)">✅ ready</span>' : '<span style="color:var(--red)">❌</span>';
+    const key = p.has_key ? '✅' : `❌ ${esc(p.env_key)}`;
+    let quota = '∞';
+    if (p.daily_limit > 0) {
+      const pct = p.remaining / p.daily_limit;
+      const color = pct < 0.1 ? 'var(--red)' : pct < 0.3 ? 'var(--yellow)' : 'var(--green)';
+      quota = `<span style="color:${color}">${p.remaining}/${p.daily_limit}</span>`;
+    }
+    html += `<tr><td>${esc(p.name)}</td><td>${tier}</td><td>${status}</td><td>${key}</td><td>${quota}</td></tr>`;
+  }
+  html += '</table>';
+  document.getElementById('providerList').innerHTML = html;
+}
+function closeProviders() { document.getElementById('providerModal').classList.remove('open'); }
+
+async function addKey() {
+  const name = document.getElementById('keyName').value.trim();
+  const val = document.getElementById('keyValue').value.trim();
+  if (!name || !val) return;
+  const fd = new FormData();
+  fd.append('env_key', name); fd.append('value', val);
+  await fetch('/api/key', { method: 'POST', body: fd });
+  document.getElementById('keyName').value = '';
+  document.getElementById('keyValue').value = '';
+  openProviders(); // refresh
+}
+</script>
+</body>
+</html>

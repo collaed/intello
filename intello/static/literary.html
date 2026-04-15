@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L'Intello — Literary Analysis</title>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
+           --muted: #71717a; --accent: #6366f1; --green: #22c55e; --red: #ef4444;
+           --yellow: #eab308; --blue: #3b82f6; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { padding: 12px 24px; border-bottom: 1px solid var(--border); display: flex;
+           align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.1rem; }
+  header h1 span { color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: .95rem; margin-bottom: 12px; color: var(--accent); }
+  .panel h3 { font-size: .85rem; margin: 12px 0 6px; color: var(--muted); }
+  .btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px;
+         cursor: pointer; font-size: .85rem; }
+  .btn:hover { opacity: .9; }
+  .btn-sm { padding: 4px 10px; font-size: .8rem; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-green { background: var(--green); }
+  .btn-red { background: var(--red); }
+  input, textarea, select { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+                             padding: 8px; border-radius: 6px; font-size: .85rem; width: 100%; }
+  textarea { min-height: 80px; font-family: inherit; resize: vertical; }
+
+  /* Structure list */
+  .chapter-item { padding: 6px 8px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: .85rem; }
+  .chapter-item:hover { background: var(--bg); }
+  .chapter-item .lines { color: var(--muted); font-size: .75rem; }
+
+  /* Character badges */
+  .char-badge { display: inline-block; background: var(--bg); border: 1px solid var(--border);
+                padding: 2px 8px; border-radius: 12px; font-size: .8rem; margin: 2px; }
+  .char-badge .count { color: var(--muted); font-size: .7rem; }
+
+  /* Pacing chart */
+  .pacing-bar { display: flex; align-items: flex-end; gap: 1px; height: 80px; margin: 8px 0; }
+  .pacing-bar .bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; transition: height .3s; position: relative; }
+  .pacing-bar .bar:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border);
+    padding: 2px 6px; border-radius: 4px; font-size: .7rem; white-space: nowrap; }
+
+  /* Thread bars */
+  .thread-bar { position: absolute; height: 8px; border-radius: 4px; cursor: pointer;
+                opacity: .85; transition: opacity .2s, height .2s; }
+  .thread-bar:hover { opacity: 1; height: 12px; margin-top: -2px; }
+  .thread-bar::after { content: attr(data-tip); position: absolute; bottom: 14px; left: 0;
+    background: var(--surface); border: 1px solid var(--border); padding: 4px 8px;
+    border-radius: 4px; font-size: .75rem; white-space: nowrap; display: none;
+    max-width: 300px; overflow: hidden; text-overflow: ellipsis; z-index: 5; }
+  .thread-bar:hover::after { display: block; }
+  .thread-resolved { opacity: .5; }
+
+  /* Thread descriptions */
+  .thread-desc { padding: 8px 12px; border-left: 4px solid; margin: 4px 0; font-size: .85rem;
+                 border-radius: 0 6px 6px 0; background: var(--bg); }
+  .thread-desc .cat { font-size: .7rem; text-transform: uppercase; font-weight: 600; }
+  .thread-desc .lines { color: var(--muted); font-size: .75rem; }
+  .thread-desc .status { font-size: .75rem; }
+
+  /* Text viewer */
+  .text-view { font-family: 'Georgia', serif; font-size: .95rem; line-height: 1.8; max-height: 60vh;
+               overflow-y: auto; padding: 16px; }
+  .text-view .line { display: flex; gap: 12px; }
+  .text-view .line-num { color: var(--muted); font-size: .75rem; min-width: 35px; text-align: right;
+                          font-family: monospace; padding-top: 3px; user-select: none; }
+  .text-view .line-text { flex: 1; }
+  .text-view .line-text.dialogue { color: var(--blue); }
+  .text-view .line-text.high-tension { border-left: 3px solid var(--red); padding-left: 8px; }
+  .text-view .line-text.chapter-head { font-weight: bold; font-size: 1.1rem; margin-top: 16px; color: var(--accent); }
+
+  /* Edits */
+  .edit-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; }
+  .edit-card .original { color: var(--red); text-decoration: line-through; font-size: .85rem; }
+  .edit-card .replacement { color: var(--green); font-size: .85rem; }
+  .edit-card .reason { color: var(--muted); font-size: .8rem; margin-top: 4px; }
+  .edit-card .actions { margin-top: 8px; display: flex; gap: 6px; }
+
+  /* Analysis output */
+  .analysis { white-space: pre-wrap; font-size: .9rem; line-height: 1.7; max-height: 50vh; overflow-y: auto; }
+
+  /* Upload area */
+  .upload-area { border: 2px dashed var(--border); border-radius: 10px; padding: 40px; text-align: center;
+                 cursor: pointer; margin-bottom: 20px; }
+  .upload-area:hover { border-color: var(--accent); }
+  .upload-area input { display: none; }
+
+  #docList .doc-item { padding: 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  #docList .doc-item:hover { background: var(--bg); }
+  .loading { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📚 <span>Literary Analysis</span></h1>
+  <a href="/">← Back to Chat</a>
+</header>
+
+<div class="container">
+  <!-- Upload -->
+  <div id="uploadSection">
+    <!-- Project Brief -->
+    <div class="panel" style="margin-bottom:16px">
+      <h2>📋 Project Brief</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <input type="text" id="projTitle" placeholder="Project title">
+        <select id="projGenre" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:.85rem">
+          <option value="fiction">📖 Fiction</option>
+          <option value="non-fiction">📚 Non-Fiction</option>
+          <option value="screenplay">🎬 Screenplay</option>
+          <option value="poetry">🎭 Poetry</option>
+          <option value="academic">🎓 Academic</option>
+          <option value="technical">⚙️ Technical</option>
+        </select>
+      </div>
+      <textarea id="projBrief" placeholder="Describe your project: what's the story about, what are you trying to achieve..." rows="3"></textarea>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+        <input type="text" id="projStyle" placeholder="Target style (e.g. Hemingway, noir, lyrical...)">
+        <input type="number" id="projTarget" placeholder="Target word count (e.g. 80000)">
+      </div>
+      <textarea id="projSteps" placeholder="Key milestones/steps (one per line):&#10;1. Establish the world&#10;2. Introduce the conflict&#10;3. Rising tension&#10;4. Climax&#10;5. Resolution" rows="4" style="margin-top:8px"></textarea>
+      <button class="btn" style="margin-top:8px" onclick="createProject()">Create Project</button>
+      <div id="projList" style="margin-top:12px"></div>
+    </div>
+
+    <div class="upload-area" onclick="document.getElementById('fileUp').click()">
+      <input type="file" id="fileUp" accept=".txt,.md,.html,.rtf">
+      <p>📄 Drop a document or click to upload</p>
+      <p style="color:var(--muted);font-size:.8rem;margin-top:8px">Supports .txt, .md — or paste text below</p>
+    </div>
+    <textarea id="pasteArea" placeholder="Or paste your text here..." rows="4"></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input type="text" id="docTitle" placeholder="Document title">
+      <select id="docProject" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:.85rem">
+        <option value="">No project</option>
+      </select>
+      <button class="btn" onclick="uploadDoc()">Ingest</button>
+    </div>
+    <h3 style="margin-top:20px;color:var(--muted)">Previous Documents</h3>
+    <div id="docList"></div>
+  </div>
+
+  <!-- Document View (hidden until doc loaded) -->
+  <div id="docView" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 id="docTitleDisplay" style="font-size:1.2rem"></h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="runAnalysis()">🔬 Analyze</button>
+        <button class="btn btn-outline" onclick="runIterate()">🔄 Iterate</button>
+        <button class="btn btn-outline" onclick="autoPopulate()">🪄 Auto-fill Project</button>
+        <button class="btn btn-outline" onclick="exportDoc()">📄 Export HTML</button>
+        <button class="btn btn-outline" onclick="showUpload()">← Documents</button>
+      </div>
+    </div>
+    <div id="docStats" style="color:var(--muted);font-size:.85rem;margin-bottom:16px"></div>
+
+    <!-- Workflow Control Panel -->
+    <div class="panel" style="margin-bottom:16px;display:none" id="workflowPanel">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:.8rem;color:var(--muted)">PHASE:</span>
+          <span id="wfPhase" style="font-weight:600"></span>
+          <span id="wfProgress" style="margin-left:12px;font-size:.85rem"></span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="wfMode" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px;font-size:.8rem">
+            <option value="horizontal">↔️ Horizontal (expand text)</option>
+            <option value="vertical">↕️ Vertical (enrich structure)</option>
+          </select>
+          <div style="display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px">
+            <span style="font-size:.75rem;color:var(--muted)">Budget:</span>
+            <button class="btn-sm btn-outline" onclick="setBudget(1)" style="padding:2px 6px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)">1%</button>
+            <button class="btn-sm btn-outline" onclick="setBudget(10)" style="padding:2px 6px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--accent);border:none;color:#fff">10%</button>
+            <button class="btn-sm btn-outline" onclick="setBudget(50)" style="padding:2px 6px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)">50%</button>
+            <button class="btn-sm btn-outline" onclick="setBudget(100)" style="padding:2px 6px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)">100%</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn" id="wfNextBtn" onclick="workflowNext()" style="font-size:1rem;padding:10px 24px">
+          ✍️ Next Step
+        </button>
+        <span id="wfTimer" style="font-size:.8rem;color:var(--muted)"></span>
+      </div>
+      <div id="wfWordBar" style="margin-top:8px;background:var(--bg);border-radius:4px;height:20px;overflow:hidden;position:relative">
+        <div id="wfWordFill" style="height:100%;background:var(--accent);border-radius:4px;transition:width .5s"></div>
+        <span id="wfWordLabel" style="position:absolute;top:2px;left:8px;font-size:.75rem;color:var(--text)"></span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Left sidebar -->
+      <div>
+        <div class="panel">
+          <h2>📖 Structure</h2>
+          <div id="structureList"></div>
+        </div>
+        <div class="panel" style="margin-top:12px">
+          <h2>👤 Characters</h2>
+          <div id="characterList"></div>
+        </div>
+        <div class="panel" style="margin-top:12px">
+          <h2>📊 Pacing</h2>
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted)">
+            <span>Start</span><span>Tension →</span><span>End</span>
+          </div>
+          <div id="pacingChart" class="pacing-bar"></div>
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);margin-top:4px">
+            <span>🟢 Low</span><span>🟡 Med</span><span>🔴 High</span>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:12px">
+          <h2>✏️ Pending Edits</h2>
+          <div id="editsList"></div>
+        </div>
+      </div>
+
+      <!-- Main content -->
+      <div>
+        <!-- Narrative Threads (full width above text) -->
+        <div class="panel" style="margin-bottom:12px">
+          <h2>🧵 Narrative Threads & Open Questions</h2>
+          <div id="threadsChart" style="position:relative;min-height:30px;margin:8px 0"></div>
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted)">
+            <span>Start</span><span>→ Document timeline →</span><span>End</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h2>📝 Text</h2>
+            <div id="toolBar" style="display:flex;gap:4px;flex-wrap:wrap">
+              <button class="btn-sm btn-outline" onclick="runTool('show_not_tell')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Convert telling to showing">👁️ Show</button>
+              <button class="btn-sm btn-outline" onclick="runTool('describe')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Describe with 5 senses">🌸 Describe</button>
+              <button class="btn-sm btn-outline" onclick="runTool('tone_shift')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Shift tone">🎭 Tone</button>
+              <button class="btn-sm btn-outline" onclick="runTool('brainstorm')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Brainstorm ideas">💡 Brainstorm</button>
+              <button class="btn-sm btn-outline" onclick="runTool('shrink')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Compress to blurb/synopsis">🔍 Shrink</button>
+              <button class="btn-sm btn-outline" onclick="runTool('first_draft')" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--muted)" title="Generate first draft from description">📄 Draft</button>
+              <button class="btn-sm btn-outline" onclick="runBetaRead()" style="padding:3px 8px;font-size:.75rem;border-radius:4px;cursor:pointer;background:var(--accent);border:none;color:#fff" title="3 AI beta readers">📖 Beta Read</button>
+            </div>
+          </div>
+          <div id="toolInput" style="display:none;margin:8px 0;padding:8px;background:var(--bg);border-radius:6px">
+            <div id="toolInputFields"></div>
+            <button class="btn btn-sm" onclick="submitTool()" style="margin-top:6px">Run</button>
+          </div>
+          <div id="toolOutput" style="display:none;margin:8px 0;padding:12px;background:#1e1b2e;border:1px solid #3730a3;border-radius:8px;font-size:.9rem;white-space:pre-wrap;max-height:300px;overflow-y:auto"></div>
+          <div id="textView" class="text-view"></div>
+        </div>
+        <div class="panel" style="margin-top:12px;display:none" id="analysisPanel">
+          <h2>🔬 Analysis</h2>
+          <div id="analysisOutput" class="analysis"></div>
+        </div>
+
+        <!-- Thread Descriptions -->
+        <div class="panel" style="margin-top:12px;display:none" id="threadDescPanel">
+          <h2>🧵 Thread Details</h2>
+          <div id="threadDescriptions"></div>
+        </div>
+
+        <!-- Iteration Progress -->
+        <div class="panel" style="margin-top:12px;display:none" id="iterPanel">
+          <h2>🔄 Iterative Analysis</h2>
+          <div id="iterProgress" style="margin-bottom:8px"></div>
+          <div id="iterResults" class="analysis" style="max-height:40vh"></div>
+          <div style="margin-top:8px;display:flex;gap:8px">
+            <button class="btn" onclick="runIterate()" id="iterNextBtn">Next Chunk →</button>
+            <button class="btn btn-outline" onclick="runIterateAll()">Run All Remaining</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentDoc = null;
+let docData = null;
+
+// Load document list on start
+loadDocList();
+loadProjects();
+
+async function loadProjects() {
+  const r = await fetch('/api/literary/projects');
+  const projects = await r.json();
+  // Populate project selector
+  const sel = document.getElementById('docProject');
+  sel.innerHTML = '<option value="">No project</option>' +
+    projects.map(p => `<option value="${p.project_id}">${esc(p.title)} (${p.genre})</option>`).join('');
+  // Show project list
+  const el = document.getElementById('projList');
+  if (!projects.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<h3 style="color:var(--muted);margin-bottom:6px">Existing Projects</h3>' +
+    projects.map(p => `<div style="padding:6px;border-bottom:1px solid var(--border);font-size:.85rem;cursor:pointer"
+      onclick="loadProjectBrief('${p.project_id}')">
+      <b>${esc(p.title)}</b> <span style="color:var(--muted)">${p.genre} · ${p.target_words ? p.target_words+' words' : 'no target'}</span>
+      ${p.brief ? '<br><span style="color:var(--muted);font-size:.8rem">'+esc(p.brief.substring(0,80))+'…</span>' : ''}
+    </div>`).join('');
+}
+
+async function createProject() {
+  const fd = new FormData();
+  fd.append('title', document.getElementById('projTitle').value || 'Untitled');
+  fd.append('genre', document.getElementById('projGenre').value);
+  fd.append('brief', document.getElementById('projBrief').value);
+  fd.append('style', document.getElementById('projStyle').value);
+  fd.append('target_words', document.getElementById('projTarget').value || '0');
+  fd.append('steps', document.getElementById('projSteps').value);
+  await fetch('/api/literary/projects', { method: 'POST', body: fd });
+  loadProjects();
+}
+
+async function loadProjectBrief(pid) {
+  const r = await fetch(`/api/literary/projects/${pid}`);
+  const p = await r.json();
+  document.getElementById('projTitle').value = p.title || '';
+  document.getElementById('projGenre').value = p.genre || 'fiction';
+  document.getElementById('projBrief').value = p.brief || '';
+  document.getElementById('projStyle').value = p.style || p.detected_style || '';
+  document.getElementById('projTarget').value = p.target_words || '';
+  document.getElementById('projSteps').value = (p.steps || []).join('\n');
+  document.getElementById('docProject').value = pid;
+  // Show auto-detected fields if present
+  let extra = '';
+  if (p.detected_style) extra += `<b>Detected style:</b> ${esc(p.detected_style)}<br>`;
+  if (p.detected_intent) extra += `<b>Intent:</b> ${esc(p.detected_intent)}<br>`;
+  if (p.tone) extra += `<b>Tone:</b> ${esc(p.tone)} `;
+  if (p.pov) extra += `<b>POV:</b> ${esc(p.pov)} `;
+  if (p.setting) extra += `<b>Setting:</b> ${esc(p.setting)}<br>`;
+  if (p.audience) extra += `<b>Audience:</b> ${esc(p.audience)}<br>`;
+  if (p.themes && p.themes.length) extra += `<b>Themes:</b> ${p.themes.map(t=>esc(t)).join(', ')}<br>`;
+  if (p.character_arcs && p.character_arcs.length) {
+    extra += '<b>Character arcs:</b><br>';
+    for (const c of p.character_arcs) {
+      const name = typeof c === 'object' ? c.name : c;
+      const arc = typeof c === 'object' ? c.arc : '';
+      extra += `  • <b>${esc(name)}</b>: ${esc(arc)}<br>`;
+    }
+  }
+  if (p.iteration_state && p.iteration_state.completed) {
+    extra += `<br><b>🔄 Iteration:</b> ${p.iteration_state.completed.length}/${p.iteration_state.total_chunks || '?'} chunks processed`;
+  }
+  const detailEl = document.getElementById('projDetails');
+  if (detailEl) detailEl.innerHTML = extra;
+  else if (extra) {
+    const d = document.createElement('div');
+    d.id = 'projDetails';
+    d.style.cssText = 'font-size:.85rem;color:var(--text);margin-top:8px;padding:8px;background:var(--bg);border-radius:6px;line-height:1.6';
+    d.innerHTML = extra;
+    document.getElementById('projList').before(d);
+  }
+}
+
+async function loadDocList() {
+  const r = await fetch('/api/literary/documents');
+  const docs = await r.json();
+  const el = document.getElementById('docList');
+  if (!docs.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.85rem">No documents yet.</p>'; return; }
+  el.innerHTML = docs.map(d =>
+    `<div class="doc-item" onclick="loadDoc('${d.doc_id}')">
+      <b>${esc(d.title)}</b><br>
+      <span style="color:var(--muted);font-size:.8rem">${d.total_lines} lines · ${d.total_words} words</span>
+    </div>`
+  ).join('');
+}
+
+document.getElementById('fileUp').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    document.getElementById('pasteArea').value = await file.text();
+    document.getElementById('docTitle').value = file.name.replace(/\.[^.]+$/, '');
+  }
+});
+
+async function uploadDoc() {
+  const text = document.getElementById('pasteArea').value;
+  const title = document.getElementById('docTitle').value || 'Untitled';
+  const projectId = document.getElementById('docProject').value;
+  if (!text || text.length < 50) { alert('Text too short'); return; }
+  const fd = new FormData();
+  fd.append('text', text);
+  fd.append('title', title);
+  if (projectId) fd.append('project_id', projectId);
+  const r = await fetch('/api/literary/ingest', { method: 'POST', body: fd });
+  const data = await r.json();
+  if (data.error) { alert(data.error); return; }
+  loadDoc(data.doc_id);
+}
+
+async function loadDoc(docId) {
+  currentDoc = docId;
+  document.getElementById('uploadSection').style.display = 'none';
+  document.getElementById('docView').style.display = 'block';
+
+  const r = await fetch(`/api/literary/${docId}`);
+  docData = await r.json();
+  if (docData.error) { alert(docData.error); return; }
+
+  document.getElementById('docTitleDisplay').textContent = docData.info.title;
+  document.getElementById('docStats').innerHTML =
+    `${docData.info.total_lines} lines · ${docData.info.total_words} words · ${docData.structure.length} chapters · ${docData.chunks.length} chunks` +
+    (docData.info.project_id ? ` · <span style="color:var(--accent)">📋 Project linked</span>` : '');
+
+  // Structure
+  document.getElementById('structureList').innerHTML = docData.structure.map(s => {
+    const meta = JSON.parse(s.metadata);
+    return `<div class="chapter-item" onclick="scrollToLine(${s.start_line})">
+      ${esc(meta.title)} <span class="lines">L${s.start_line}-${s.end_line}</span>
+    </div>`;
+  }).join('');
+
+  // Characters
+  const chars = docData.characters || [];
+  document.getElementById('characterList').innerHTML = chars.length
+    ? chars.map(c => `<span class="char-badge">${esc(c.name)} <span class="count">${c.mentions}×</span></span>`).join('')
+    : '<span style="color:var(--muted);font-size:.85rem">No characters detected</span>';
+
+  // Pacing chart
+  renderPacing(docData.pacing);
+
+  // Threads
+  renderThreads(docData.threads || [], docData.info.total_lines);
+
+  // Load text
+  loadText(1, Math.min(200, docData.info.total_lines));
+
+  // Load edits
+  loadEdits();
+
+  // Load workflow if project linked
+  loadWorkflow();
+}
+
+const THREAD_COLORS = {
+  identity: '#ef4444', motive: '#f97316', event: '#eab308', method: '#22c55e',
+  location: '#06b6d4', timing: '#3b82f6', suspense: '#8b5cf6', secret: '#ec4899',
+  mystery: '#a855f7', concealment: '#6366f1', deception: '#f43f5e', curiosity: '#14b8a6',
+  anomaly: '#f59e0b', decision: '#10b981', unknown: '#6b7280', uncertainty: '#9ca3af',
+  threat: '#dc2626', promise: '#2563eb', investigation: '#7c3aed',
+};
+
+function renderThreads(threads, totalLines) {
+  const chart = document.getElementById('threadsChart');
+  const descPanel = document.getElementById('threadDescPanel');
+  const descEl = document.getElementById('threadDescriptions');
+
+  if (!threads.length) {
+    chart.innerHTML = '<span style="color:var(--muted);font-size:.85rem">No narrative threads detected</span>';
+    return;
+  }
+
+  descPanel.style.display = 'block';
+
+  // Render horizontal bars
+  let barsHtml = '';
+  threads.forEach((t, i) => {
+    const left = ((t.start_line - 1) / totalLines * 100).toFixed(1);
+    const width = Math.max(2, ((t.end_line - t.start_line) / totalLines * 100)).toFixed(1);
+    const color = THREAD_COLORS[t.category] || '#6b7280';
+    const resolved = t.resolved ? 'thread-resolved' : '';
+    const status = t.resolved ? '✅' : '❓';
+    const tip = `${status} ${t.category}: ${t.description.substring(0, 80)}`;
+    barsHtml += `<div class="thread-bar ${resolved}" style="left:${left}%;width:${width}%;top:${i * 12}px;background:${color}"
+      data-tip="${esc(tip)}" onclick="scrollToLine(${t.start_line})"></div>`;
+  });
+  chart.style.minHeight = (threads.length * 12 + 8) + 'px';
+  chart.innerHTML = barsHtml;
+
+  // Render descriptions below
+  descEl.innerHTML = threads.map(t => {
+    const color = THREAD_COLORS[t.category] || '#6b7280';
+    const status = t.resolved
+      ? `<span class="status" style="color:var(--green)">✅ Resolved at line ${t.end_line}</span>`
+      : `<span class="status" style="color:var(--yellow)">❓ Open (spans to end)</span>`;
+    return `<div class="thread-desc" style="border-color:${color}" onclick="scrollToLine(${t.start_line})">
+      <span class="cat" style="color:${color}">${esc(t.category)}</span>
+      <span class="lines">L${t.start_line}–${t.end_line}</span> ${status}
+      <div>${esc(t.description)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderPacing(pacing) {
+  const el = document.getElementById('pacingChart');
+  if (!pacing.length) { el.innerHTML = '<span class="loading">No pacing data</span>'; return; }
+  const maxT = Math.max(...pacing.map(p => p.tension), 1);
+  el.innerHTML = pacing.map(p => {
+    const h = Math.max(5, (p.tension / maxT) * 100);
+    const color = p.tension > 1.5 ? 'var(--red)' : p.tension > 0.5 ? 'var(--yellow)' : 'var(--green)';
+    return `<div class="bar" style="height:${h}%;background:${color}"
+      data-tip="L${p.start_line}-${p.end_line} T:${p.tension.toFixed(1)} D:${(p.dialogue_ratio*100).toFixed(0)}%"></div>`;
+  }).join('');
+}
+
+async function loadText(start, end) {
+  const r = await fetch(`/api/literary/${currentDoc}/lines?start=${start}&end=${end}`);
+  const lines = await r.json();
+  const el = document.getElementById('textView');
+  el.innerHTML = lines.map(l => {
+    let cls = '';
+    if (l.text.match(/^(Chapter|CHAPTER|Part|PART|Act|ACT)/)) cls = 'chapter-head';
+    else if (l.text.match(/[""\u201c\u201d]/) || l.text.match(/^\s*[-\u2014"]/)) cls = 'dialogue';
+    return `<div class="line"><span class="line-num">${l.line_num}</span><span class="line-text ${cls}">${esc(l.text)}</span></div>`;
+  }).join('');
+}
+
+function scrollToLine(lineNum) {
+  loadText(lineNum, lineNum + 100);
+}
+
+async function loadEdits() {
+  const r = await fetch(`/api/literary/${currentDoc}/edits`);
+  const edits = await r.json();
+  const el = document.getElementById('editsList');
+  if (!edits.length) { el.innerHTML = '<span style="color:var(--muted);font-size:.85rem">No pending edits</span>'; return; }
+  el.innerHTML = edits.map(e =>
+    `<div class="edit-card">
+      <div style="font-size:.75rem;color:var(--muted)">Lines ${e.start_line}-${e.end_line} · ${esc(e.model)}</div>
+      <div class="original">${esc(e.original).substring(0,100)}</div>
+      <div class="replacement">${esc(e.replacement).substring(0,100)}</div>
+      <div class="reason">${esc(e.reason)}</div>
+      <div class="actions">
+        <button class="btn btn-sm btn-green" onclick="applyEdit(${e.edit_id})">✓ Apply</button>
+        <button class="btn btn-sm btn-red" onclick="rejectEdit(${e.edit_id})">✗ Reject</button>
+      </div>
+    </div>`
+  ).join('');
+}
+
+async function applyEdit(id) {
+  await fetch(`/api/literary/${currentDoc}/edit/${id}/apply`, { method: 'POST' });
+  loadEdits();
+  loadText(1, 200);
+}
+async function rejectEdit(id) {
+  await fetch(`/api/literary/${currentDoc}/edit/${id}/reject`, { method: 'POST' });
+  loadEdits();
+}
+
+async function runAnalysis() {
+  const panel = document.getElementById('analysisPanel');
+  const output = document.getElementById('analysisOutput');
+  panel.style.display = 'block';
+  output.innerHTML = '<span class="loading">🔬 Running multi-model analysis... this may take 30-60 seconds</span>';
+
+  const fd = new FormData();
+  fd.append('focus', 'full');
+  const r = await fetch(`/api/literary/${currentDoc}/analyze`, { method: 'POST', body: fd });
+  const data = await r.json();
+
+  output.textContent = data.analysis || data.error || 'Analysis failed';
+  if (data.edits_proposed > 0) {
+    output.textContent += `\n\n✏️ ${data.edits_proposed} edits proposed — check the Pending Edits panel.`;
+    loadEdits();
+  }
+}
+
+function exportDoc() {
+  window.open(`/api/literary/${currentDoc}/export`, '_blank');
+}
+
+async function autoPopulate() {
+  const projectId = document.getElementById('docProject').value;
+  if (!projectId) { alert('Link this document to a project first'); return; }
+  const btn = event.target; btn.textContent = '🪄 Analyzing...'; btn.disabled = true;
+  const fd = new FormData();
+  fd.append('doc_id', currentDoc);
+  const r = await fetch(`/api/literary/projects/${projectId}/auto-populate`, { method: 'POST', body: fd });
+  const data = await r.json();
+  btn.textContent = '🪄 Auto-fill Project'; btn.disabled = false;
+  if (data.ok) {
+    alert('Project fields auto-populated! Check the project brief.');
+    loadProjectBrief(projectId);
+  } else {
+    alert(data.error || 'Failed');
+  }
+}
+
+let iterating = false;
+async function runIterate(resume) {
+  const projectId = document.getElementById('docProject').value;
+  const panel = document.getElementById('iterPanel');
+  panel.style.display = 'block';
+  const prog = document.getElementById('iterProgress');
+  const results = document.getElementById('iterResults');
+  prog.innerHTML = '<span class="loading">Processing next chunk...</span>';
+
+  const fd = new FormData();
+  if (projectId) fd.append('project_id', projectId);
+  fd.append('resume', resume ? 'true' : 'false');
+  const r = await fetch(`/api/literary/${currentDoc}/iterate`, { method: 'POST', body: fd });
+  const data = await r.json();
+
+  if (data.status === 'complete') {
+    prog.innerHTML = `<span style="color:var(--green)">✅ Complete — all chunks processed</span>`;
+    document.getElementById('iterNextBtn').disabled = true;
+  } else if (data.status === 'in_progress') {
+    prog.innerHTML = `<b>Progress: ${data.progress}</b> — ${data.remaining} chunks remaining`;
+    results.textContent = (results.textContent ? results.textContent + '\n\n---\n\n' : '') +
+      `[${data.chunk_result.chapter} L${data.chunk_result.lines}]\n${data.chunk_result.analysis}`;
+    results.scrollTop = results.scrollHeight;
+    loadEdits();
+  } else {
+    prog.innerHTML = `<span style="color:var(--red)">Error: ${data.error || 'Unknown'}</span>`;
+  }
+}
+
+async function runIterateAll() {
+  const projectId = document.getElementById('docProject').value;
+  const panel = document.getElementById('iterPanel');
+  panel.style.display = 'block';
+  iterating = true;
+  while (iterating) {
+    const fd = new FormData();
+    if (projectId) fd.append('project_id', projectId);
+    fd.append('resume', 'true');
+    const r = await fetch(`/api/literary/${currentDoc}/iterate`, { method: 'POST', body: fd });
+    const data = await r.json();
+    const prog = document.getElementById('iterProgress');
+    const results = document.getElementById('iterResults');
+    if (data.status === 'complete') {
+      prog.innerHTML = `<span style="color:var(--green)">✅ Complete</span>`;
+      iterating = false;
+      loadEdits();
+      break;
+    } else if (data.status === 'in_progress') {
+      prog.innerHTML = `<b>${data.progress}</b> — ${data.remaining} remaining`;
+      results.textContent = (results.textContent ? results.textContent + '\n\n---\n\n' : '') +
+        `[${data.chunk_result.chapter} L${data.chunk_result.lines}]\n${data.chunk_result.analysis}`;
+      results.scrollTop = results.scrollHeight;
+    } else {
+      prog.innerHTML = `<span style="color:var(--red)">Paused: ${data.error || 'rate limit?'}</span>`;
+      iterating = false;
+      break;
+    }
+  }
+}
+
+// --- Writing Tools ---
+let currentToolName = '';
+
+function getSelectedText() {
+  const sel = window.getSelection();
+  return sel ? sel.toString().trim() : '';
+}
+
+function runTool(tool) {
+  currentToolName = tool;
+  const sel = getSelectedText();
+  const inp = document.getElementById('toolInput');
+  const fields = document.getElementById('toolInputFields');
+  inp.style.display = 'block';
+
+  const extras = {
+    tone_shift: '<input type="text" id="toolTarget" placeholder="Target tone: darker, funnier, more intimate..." style="margin-top:4px">',
+    brainstorm: '<select id="toolTarget" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;font-size:.85rem;margin-top:4px"><option value="plot">Plot ideas</option><option value="character">Characters</option><option value="twist">Twists</option><option value="setting">Settings</option><option value="dialogue">Dialogue</option></select>',
+    shrink: '<select id="toolTarget" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;font-size:.85rem;margin-top:4px"><option value="blurb">Blurb</option><option value="logline">Logline</option><option value="synopsis">Synopsis</option><option value="outline">Outline</option><option value="pitch">Pitch</option></select>',
+    first_draft: '<input type="number" id="toolWordCount" value="1000" placeholder="Word count" style="margin-top:4px;width:120px">',
+  };
+
+  fields.innerHTML = `<textarea id="toolText" rows="3" placeholder="Select text in the viewer, or type/paste here...">${esc(sel)}</textarea>` +
+    (extras[tool] || '');
+}
+
+async function submitTool() {
+  const text = document.getElementById('toolText').value;
+  if (!text) { alert('Enter or select some text first'); return; }
+  const fd = new FormData();
+  fd.append('text', text);
+  fd.append('tool', currentToolName);
+  const target = document.getElementById('toolTarget');
+  if (target) fd.append('target', target.value);
+  const wc = document.getElementById('toolWordCount');
+  if (wc) fd.append('word_count', wc.value);
+
+  const out = document.getElementById('toolOutput');
+  out.style.display = 'block';
+  out.textContent = '⏳ Processing...';
+
+  const r = await fetch('/api/tools/transform', { method: 'POST', body: fd });
+  const data = await r.json();
+  out.textContent = data.result || data.error;
+  document.getElementById('toolInput').style.display = 'none';
+}
+
+async function runBetaRead() {
+  const sel = getSelectedText();
+  let text = sel;
+  if (!text && currentDoc) {
+    // Use first 6000 chars of the document
+    const r = await fetch(`/api/literary/${currentDoc}/lines?start=1&end=100`);
+    const lines = await r.json();
+    text = lines.map(l => l.text).join('\n');
+  }
+  if (!text) { alert('Select text or load a document first'); return; }
+
+  const out = document.getElementById('toolOutput');
+  out.style.display = 'block';
+  out.textContent = '📖 Running 3 beta readers in parallel... (15-30 seconds)';
+
+  const fd = new FormData();
+  fd.append('text', text);
+  const r = await fetch('/api/tools/beta-read', { method: 'POST', body: fd });
+  const data = await r.json();
+
+  if (data.readers) {
+    out.textContent = data.readers.map(r =>
+      `━━━ ${r.type.toUpperCase()} READER (${r.model}) ━━━\n\n${r.feedback}`
+    ).join('\n\n\n');
+  } else {
+    out.textContent = data.error || 'Failed';
+  }
+}
+
+// --- Workflow Engine ---
+let wfBudget = 10;
+let wfCooldown = 0;
+let wfTimerInterval = null;
+
+function setBudget(pct) {
+  wfBudget = pct;
+  document.querySelectorAll('#workflowPanel [onclick^="setBudget"]').forEach(b => {
+    b.style.background = 'var(--surface)'; b.style.color = 'var(--muted)'; b.style.border = '1px solid var(--border)';
+  });
+  event.target.style.background = 'var(--accent)'; event.target.style.color = '#fff'; event.target.style.border = 'none';
+}
+
+async function loadWorkflow() {
+  const pid = document.getElementById('docProject').value;
+  if (!pid) { document.getElementById('workflowPanel').style.display = 'none'; return; }
+  const r = await fetch(`/api/literary/workflow/${pid}`);
+  const s = await r.json();
+  if (s.error) return;
+  const panel = document.getElementById('workflowPanel');
+  panel.style.display = 'block';
+  document.getElementById('wfPhase').textContent = s.phase.toUpperCase();
+  document.getElementById('wfPhase').style.color =
+    s.phase === 'outline' ? 'var(--yellow)' : s.phase === 'enrich' ? 'var(--accent)' :
+    s.phase === 'expand' ? 'var(--green)' : 'var(--blue)';
+  document.getElementById('wfProgress').textContent =
+    `${s.steps_completed}/${s.steps_total} steps · ${s.current_words}/${s.target_words} words`;
+  document.getElementById('wfNextBtn').textContent = s.next_label;
+  document.getElementById('wfWordFill').style.width = s.word_pct + '%';
+  document.getElementById('wfWordLabel').textContent = `${s.current_words} / ${s.target_words} words (${s.word_pct}%)`;
+  // Auto-select mode based on phase
+  if (s.phase === 'enrich' || (s.phase === 'expand' && !s.structure_rich)) {
+    document.getElementById('wfMode').value = 'vertical';
+  }
+}
+
+async function workflowNext() {
+  const pid = document.getElementById('docProject').value;
+  if (!pid) { alert('Link a project first'); return; }
+  const btn = document.getElementById('wfNextBtn');
+  const origLabel = btn.textContent;
+  btn.textContent = '⏳ Working...'; btn.disabled = true;
+
+  const fd = new FormData();
+  fd.append('doc_id', currentDoc);
+  fd.append('mode', document.getElementById('wfMode').value);
+  fd.append('budget_pct', wfBudget);
+  const r = await fetch(`/api/literary/workflow/${pid}/next`, { method: 'POST', body: fd });
+  const data = await r.json();
+
+  btn.disabled = false;
+
+  if (data.error) {
+    btn.textContent = origLabel;
+    alert(data.error);
+    return;
+  }
+
+  // Show result
+  const panel = document.getElementById('analysisPanel');
+  panel.style.display = 'block';
+  const output = document.getElementById('analysisOutput');
+  output.textContent = (output.textContent ? output.textContent + '\n\n━━━━━━━━━━━━━━━━━━━━\n\n' : '') +
+    `[${data.mode.toUpperCase()} · ${data.model} · ${data.word_count} words · $${data.cost.toFixed(6)}]\n\n` +
+    data.content;
+  output.scrollTop = output.scrollHeight;
+
+  // Update workflow state
+  if (data.next_state) {
+    document.getElementById('wfNextBtn').textContent = data.next_state.next_label;
+    document.getElementById('wfPhase').textContent = data.next_state.phase.toUpperCase();
+    document.getElementById('wfProgress').textContent =
+      `${data.next_state.steps_completed}/${data.next_state.steps_total} steps · ${data.next_state.current_words}/${data.next_state.target_words} words`;
+    document.getElementById('wfWordFill').style.width = data.next_state.word_pct + '%';
+    document.getElementById('wfWordLabel').textContent =
+      `${data.next_state.current_words} / ${data.next_state.target_words} words (${data.next_state.word_pct}%)`;
+  }
+
+  // Throttle: cooldown based on budget
+  const cooldownSec = wfBudget <= 5 ? 5 : wfBudget <= 25 ? 3 : 1;
+  startCooldown(cooldownSec);
+}
+
+function startCooldown(seconds) {
+  wfCooldown = seconds;
+  const btn = document.getElementById('wfNextBtn');
+  const timer = document.getElementById('wfTimer');
+  btn.disabled = true;
+  if (wfTimerInterval) clearInterval(wfTimerInterval);
+  wfTimerInterval = setInterval(() => {
+    wfCooldown--;
+    timer.textContent = wfCooldown > 0 ? `⏱ ${wfCooldown}s cooldown` : '';
+    if (wfCooldown <= 0) {
+      clearInterval(wfTimerInterval);
+      btn.disabled = false;
+    }
+  }, 1000);
+}
+
+function showUpload() {
+  document.getElementById('uploadSection').style.display = 'block';
+  document.getElementById('docView').style.display = 'none';
+  loadDocList();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+</script>
+</body>
+</html>

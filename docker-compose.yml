@@ -1,0 +1,20 @@
+services:
+  intello:
+    build: .
+    container_name: intello
+    restart: unless-stopped
+    networks:
+      - web
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    volumes:
+      - intello-data:/data
+
+volumes:
+  intello-data:
+
+networks:
+  web:
+    external: true
