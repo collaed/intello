@@ -189,11 +189,12 @@ if __name__ == "__main__":
     tests = [
         test_root_page, test_literary_page, test_corkboard_page,
         test_status_endpoint, test_models_endpoint, test_providers_endpoint,
-        test_literary_documents_list, test_literary_document,
-        test_literary_projects_crud, test_scheduler_crud, test_webhooks_crud,
+        test_literary_documents_list, test_literary_projects_crud,
+        test_scheduler_crud, test_webhooks_crud,
         test_writing_tools, test_cache_stats, test_conversations,
         test_prefs, test_learning,
         test_auth_rejected_without_credentials, test_chat_completions,
+        test_literary_document,
     ]
     passed = failed = 0
     for t in tests:
