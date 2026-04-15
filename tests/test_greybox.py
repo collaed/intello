@@ -79,8 +79,8 @@ def test_cache_store_and_semantic_retrieve():
 def test_memory_conversation_flow():
     """Create conversation → add messages → verify context builds."""
     from intello.memory import create_conversation, add_message, get_messages, build_context
-
-    cid = create_conversation("grey_conv_1")
+    import uuid
+    cid = create_conversation(f"grey_conv_{uuid.uuid4().hex[:6]}")
     add_message(cid, "user", "My name is Alice")
     add_message(cid, "assistant", "Hello Alice!", "test-model", 0.0)
     add_message(cid, "user", "What is my name?")

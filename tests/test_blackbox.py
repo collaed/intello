@@ -53,10 +53,8 @@ def test_models_endpoint():
 def test_providers_endpoint():
     r = client.get("/api/providers", headers=HEADERS)
     assert r.status_code == 200
-    d = r.json()
-    assert isinstance(d, list)
-    # May be empty in test (no startup event) — just verify structure
-    print(f"✅ GET /api/providers → {len(d)} providers")
+    assert isinstance(r.json(), list)
+    print(f"✅ GET /api/providers → {len(r.json())} providers")
 
 
 def test_literary_ingest():
