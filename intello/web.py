@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from typing import Optional
@@ -31,6 +32,7 @@ from intello.craft import build_craft_prompt
 from intello.guardrails import check_confidence, check_word_count
 from intello import workflow as wf
 from intello import writing_tools as wt
+from intello import ocr
 
 app = FastAPI(title="L'Intello")
 
@@ -1317,6 +1319,113 @@ async def literary_page():
         return f.read()
 
 
+# --- OCR Service ---
+
+@app.post("/api/v1/ocr")
+async def api_ocr_image(
+    file: UploadFile = File(...),
+    language: str = Form("eng"),
+    output: str = Form("json"),
+):
+    """OCR a single image."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=f"_{file.filename}", delete=False) as f:
+        content = await file.read()
+        f.write(content)
+        tmp = f.name
+
+    result = ocr.ocr_image(tmp, language)
+    os.unlink(tmp)
+
+    if output == "text":
+        return Response(result["text"], media_type="text/plain")
+    return result
+
+
+@app.post("/api/v1/ocr/pdf")
+async def api_ocr_pdf(
+    file: UploadFile = File(...),
+    language: str = Form("eng"),
+    output: str = Form("json"),
+    pages: str = Form(""),
+):
+    """OCR a PDF — returns text or searchable PDF."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        content = await file.read()
+        f.write(content)
+        tmp = f.name
+
+    if output == "searchable_pdf":
+        out_path = tmp + "_ocr.pdf"
+        ok = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
+        os.unlink(tmp)
+        if ok:
+            from fastapi.responses import FileResponse
+            return FileResponse(out_path, media_type="application/pdf",
+                                filename=f"ocr_{file.filename}")
+        return {"error": "OCR failed"}
+
+    result = ocr.ocr_pdf_to_text(tmp, language, pages)
+    os.unlink(tmp)
+
+    if output == "text":
+        full_text = "\n\n".join(f"--- Page {p['page']} ---\n{p['text']}" for p in result["pages"])
+        return Response(full_text, media_type="text/plain")
+    return result
+
+
+@app.post("/api/v1/ocr/jobs")
+async def api_ocr_create_job(
+    file: Optional[UploadFile] = File(None),
+    file_url: Optional[str] = Form(None),
+    language: str = Form("eng"),
+    output: str = Form("searchable_pdf"),
+    pages: str = Form(""),
+):
+    """Create an async OCR job for large PDFs."""
+    import tempfile, httpx
+
+    if file and file.filename:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=str(ocr.JOBS_DIR)) as f:
+            f.write(await file.read())
+            tmp = f.name
+    elif file_url:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.get(file_url)
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=str(ocr.JOBS_DIR)) as f:
+                f.write(r.content)
+                tmp = f.name
+    else:
+        return {"error": "Provide file or file_url"}
+
+    job_id = ocr.create_job(tmp, language, output, pages)
+    asyncio.create_task(ocr.run_job(job_id))
+    return ocr.get_job(job_id)
+
+
+@app.get("/api/v1/ocr/jobs/{job_id}")
+async def api_ocr_job_status(job_id: str):
+    job = ocr.get_job(job_id)
+    if not job:
+        return {"error": "Job not found"}
+    return {k: v for k, v in job.items() if k != "file_path"}
+
+
+@app.get("/api/v1/ocr/jobs/{job_id}/result")
+async def api_ocr_job_result(job_id: str):
+    job = ocr.get_job(job_id)
+    if not job or job["status"] != "complete" or not job.get("result_path"):
+        return {"error": "Job not complete"}
+
+    if job["result_path"].endswith(".pdf"):
+        from fastapi.responses import FileResponse
+        return FileResponse(job["result_path"], media_type="application/pdf")
+    else:
+        with open(job["result_path"]) as f:
+            return json.loads(f.read())
+
+
 # --- OpenAI-compatible API (R2) ---
 
 @app.post("/v1/chat/completions")
@@ -1419,6 +1528,11 @@ async def api_status():
         ],
         "total_available": len(avail),
         "free_available": len(free),
+        "ocr": {
+            "available": shutil.which("tesseract") is not None,
+            "engine": "tesseract+ocrmypdf",
+            "languages": ocr.get_languages(),
+        },
     }
 
 
