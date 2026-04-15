@@ -71,7 +71,7 @@ def _hash(text: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()[:32]
 
 
-def get_cached(prompt: str, task_type: str, threshold: float = 0.82, max_age_hours: int = 168) -> dict | None:
+def get_cached(prompt: str, task_type: str, threshold: float = 0.75, max_age_hours: int = 168) -> dict | None:
     """Look up cache by exact hash then semantic similarity."""
     h = _hash(prompt)
     cutoff = time.time() - (max_age_hours * 3600)
