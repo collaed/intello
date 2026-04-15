@@ -5,368 +5,308 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>L'Intello</title>
 <style>
-  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
-           --muted: #71717a; --accent: #6366f1; --green: #22c55e; --red: #ef4444;
-           --yellow: #eab308; }
+  :root { --bg: #0a0a0f; --surface: #141419; --surface2: #1c1c24; --border: #2a2a35;
+           --text: #ececf1; --muted: #8e8ea0; --accent: #7c6cf0; --accent2: #9b8afb;
+           --green: #10b981; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
+           --radius: 12px; --max-w: 768px; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex;
-           align-items: center; justify-content: space-between; }
-  header h1 { font-size: 1.2rem; }
-  header h1 span { color: var(--accent); }
-  #providerBtn { background: var(--surface); border: 1px solid var(--border); color: var(--muted);
-                  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: .85rem; }
-  #providerBtn:hover { color: var(--text); border-color: var(--accent); }
+  body { font-family: 'Söhne', -apple-system, 'Segoe UI', sans-serif; background: var(--bg);
+         color: var(--text); height: 100dvh; display: flex; overflow: hidden; }
 
-  #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
-  .msg { max-width: 780px; width: 100%; margin: 0 auto; padding: 16px; border-radius: 10px;
-         line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; font-size: .95rem; }
-  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; border-radius: 10px 10px 2px 10px; }
-  .msg.system { background: var(--surface); border: 1px solid var(--border); }
-  .msg.plan { background: #1e1b2e; border: 1px solid #3730a3; font-size: .85rem; }
-  .msg.error { background: #2a1215; border: 1px solid var(--red); color: #fca5a5; }
-  .msg .label { font-size: .75rem; color: var(--muted); margin-bottom: 6px; display: block; }
-  .msg .cost { color: var(--yellow); }
-  .msg .model { color: var(--green); font-weight: 600; }
-  .confirm-bar { display: flex; gap: 8px; margin-top: 10px; }
-  .confirm-bar button { padding: 6px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: .85rem; }
-  .confirm-bar .yes { background: var(--green); color: #000; }
-  .confirm-bar .no { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  /* Sidebar */
+  .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border);
+             display: flex; flex-direction: column; flex-shrink: 0; transition: margin .2s; }
+  .sidebar.collapsed { margin-left: -260px; }
+  .sidebar-header { padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
+  .sidebar-header h2 { font-size: .9rem; font-weight: 600; }
+  .new-chat { background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+              padding: 10px 14px; border-radius: var(--radius); cursor: pointer; width: 100%;
+              text-align: left; font-size: .85rem; margin: 0 12px 8px; width: calc(100% - 24px); }
+  .new-chat:hover { background: var(--border); }
+  .conv-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .conv-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: .85rem;
+               color: var(--muted); margin-bottom: 2px; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+  .conv-item:hover { background: var(--surface2); color: var(--text); }
+  .conv-item.active { background: var(--surface2); color: var(--text); }
+  .sidebar-nav { padding: 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; }
+  .sidebar-nav a { color: var(--muted); font-size: .8rem; text-decoration: none; padding: 4px 8px;
+                   border-radius: 6px; background: var(--surface2); }
+  .sidebar-nav a:hover { color: var(--text); background: var(--border); }
 
-  #inputArea { padding: 16px 24px; border-top: 1px solid var(--border); }
-  #inputRow { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-  #prompt { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text);
-            padding: 12px; border-radius: 8px; font-size: .95rem; resize: none; min-height: 48px;
-            max-height: 200px; font-family: inherit; outline: none; }
-  #prompt:focus { border-color: var(--accent); }
-  #prompt::placeholder { color: var(--muted); }
-  .icon-btn { background: var(--surface); border: 1px solid var(--border); color: var(--muted);
-              width: 42px; height: 42px; border-radius: 8px; cursor: pointer; display: flex;
-              align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0; }
-  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
-  #sendBtn { background: var(--accent); border: none; color: #fff; width: 42px; height: 42px;
-             border-radius: 8px; cursor: pointer; font-size: 1.2rem; flex-shrink: 0; }
-  #sendBtn:disabled { opacity: .4; cursor: default; }
-  #attachInfo { max-width: 780px; margin: 6px auto 0; font-size: .8rem; color: var(--muted); display: flex;
-                gap: 12px; align-items: center; }
-  #attachInfo .tag { background: var(--surface); border: 1px solid var(--border); padding: 2px 8px;
-                     border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
-  #attachInfo .tag .x { cursor: pointer; color: var(--red); }
+  /* Main area */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { padding: 10px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+  .topbar .toggle { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.2rem; padding: 4px; }
+  .topbar .mode-select { background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+                          padding: 5px 10px; border-radius: 8px; font-size: .8rem; }
+  .topbar .provider-btn { margin-left: auto; background: var(--surface2); border: 1px solid var(--border);
+                           color: var(--muted); padding: 5px 12px; border-radius: 8px; font-size: .8rem; cursor: pointer; }
 
-  /* Modal */
-  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
-              align-items: center; justify-content: center; z-index: 10; }
-  .modal-bg.open { display: flex; }
-  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-           padding: 24px; width: 500px; max-height: 80vh; overflow-y: auto; }
-  .modal h2 { font-size: 1rem; margin-bottom: 16px; }
-  .modal table { width: 100%; font-size: .85rem; border-collapse: collapse; }
-  .modal td, .modal th { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
-  .modal .close { float: right; cursor: pointer; color: var(--muted); font-size: 1.2rem; }
-  .modal input[type=text] { width: 100%; background: var(--bg); border: 1px solid var(--border);
-                             color: var(--text); padding: 8px; border-radius: 6px; margin: 4px 0; font-size: .85rem; }
-  .modal .add-key-btn { background: var(--accent); color: #fff; border: none; padding: 6px 14px;
-                        border-radius: 6px; cursor: pointer; margin-top: 4px; font-size: .85rem; }
+  /* Chat */
+  .chat { flex: 1; overflow-y: auto; padding: 24px 16px; }
+  .chat-inner { max-width: var(--max-w); margin: 0 auto; }
+  .msg { padding: 16px 0; line-height: 1.7; font-size: .95rem; }
+  .msg + .msg { border-top: 1px solid var(--border); }
+  .msg .role { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+               margin-bottom: 6px; }
+  .msg .role.user { color: var(--accent2); }
+  .msg .role.assistant { color: var(--green); }
+  .msg .role.system { color: var(--muted); }
+  .msg .content { white-space: pre-wrap; word-wrap: break-word; }
+  .msg .meta { font-size: .75rem; color: var(--muted); margin-top: 8px; }
+  .msg .meta .model { color: var(--green); }
+  .msg .meta .cost { color: var(--yellow); }
+  .msg .feedback { display: inline-flex; gap: 2px; margin-left: 8px; }
+  .msg .feedback button { background: none; border: 1px solid var(--border); color: var(--muted);
+                           padding: 1px 6px; border-radius: 4px; cursor: pointer; font-size: .7rem; }
+  .msg .feedback button:hover { border-color: var(--accent); color: var(--accent); }
+  .plan-box { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+              padding: 12px 16px; margin: 8px 0; font-size: .8rem; color: var(--muted); }
+
+  /* Input */
+  .input-area { padding: 12px 16px 20px; }
+  .input-box { max-width: var(--max-w); margin: 0 auto; background: var(--surface2); border: 1px solid var(--border);
+               border-radius: 16px; display: flex; align-items: flex-end; padding: 8px 12px; gap: 8px;
+               transition: border-color .2s; }
+  .input-box:focus-within { border-color: var(--accent); }
+  .input-box textarea { flex: 1; background: none; border: none; color: var(--text); font-size: .95rem;
+                         resize: none; outline: none; min-height: 24px; max-height: 200px; line-height: 1.5;
+                         font-family: inherit; padding: 4px 0; }
+  .input-box textarea::placeholder { color: var(--muted); }
+  .input-tools { display: flex; gap: 4px; align-items: center; padding-bottom: 2px; }
+  .input-tools button, .input-tools label { background: none; border: none; color: var(--muted);
+                                             cursor: pointer; font-size: 1.1rem; padding: 4px;
+                                             border-radius: 6px; display: flex; }
+  .input-tools button:hover, .input-tools label:hover { background: var(--border); color: var(--text); }
+  .send-btn { background: var(--accent); color: #fff; border: none; width: 32px; height: 32px;
+              border-radius: 8px; cursor: pointer; font-size: 1rem; display: flex; align-items: center;
+              justify-content: center; flex-shrink: 0; }
+  .send-btn:disabled { opacity: .3; cursor: default; }
+  .send-btn:hover:not(:disabled) { background: var(--accent2); }
+  .attach-info { max-width: var(--max-w); margin: 4px auto 0; font-size: .75rem; color: var(--muted);
+                 display: flex; gap: 8px; }
+  .attach-tag { background: var(--surface2); border: 1px solid var(--border); padding: 2px 8px;
+                border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .attach-tag .x { cursor: pointer; color: var(--red); }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 80px 20px; }
+  .empty h1 { font-size: 1.8rem; font-weight: 600; margin-bottom: 8px; }
+  .empty h1 span { color: var(--accent); }
+  .empty p { color: var(--muted); font-size: .95rem; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .sidebar { position: fixed; z-index: 20; height: 100%; }
+    .sidebar.collapsed { margin-left: -260px; }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>⚡ <span>L'Intello</span></h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <span id="gdriveStatus" style="font-size:.8rem;color:var(--muted)"></span>
-    <button class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem" onclick="openConversations()">💬</button>
-    <button class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem" onclick="newConversation()">➕</button>
-    <a href="/literary" class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem;text-decoration:none">📚</a>
-    <a href="/corkboard" class="icon-btn" style="width:auto;padding:6px 12px;font-size:.8rem;text-decoration:none">📌</a>
-    <button id="providerBtn" onclick="openProviders()">Providers</button>
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>⚡ L'Intello</h2>
+    <button onclick="toggleSidebar()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem">✕</button>
   </div>
-</header>
+  <button class="new-chat" onclick="newConversation()">+ New chat</button>
+  <div class="conv-list" id="convList"></div>
+  <div class="sidebar-nav">
+    <a href="/literary">📚 Literary</a>
+    <a href="/corkboard">📌 Board</a>
+    <a href="#" onclick="openProviders()">⚙️ Providers</a>
+  </div>
+</aside>
 
-<div id="chat"></div>
-
-<div id="inputArea">
-  <div id="inputRow">
-    <label class="icon-btn" title="Attach file">📎<input type="file" id="fileInput" hidden></label>
-    <button class="icon-btn" title="Google Drive URL" onclick="promptGDrive()">🔗</button>
-    <select id="modeSelect" title="Processing mode" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:6px 8px;border-radius:8px;font-size:.85rem;cursor:pointer;">
+<!-- Main -->
+<div class="main">
+  <div class="topbar">
+    <button class="toggle" onclick="toggleSidebar()">☰</button>
+    <select class="mode-select" id="modeSelect">
       <option value="auto">⚡ Auto</option>
       <option value="fast">🏃 Fast</option>
       <option value="deep">🔬 Deep</option>
       <option value="debate">⚔️ Debate</option>
     </select>
-    <textarea id="prompt" rows="1" placeholder="Ask anything…" onkeydown="handleKey(event)"></textarea>
-    <button id="sendBtn" onclick="send()">➤</button>
+    <button class="provider-btn" onclick="openProviders()">Providers</button>
   </div>
-  <div id="attachInfo"></div>
+
+  <div class="chat" id="chat">
+    <div class="chat-inner" id="chatInner">
+      <div class="empty">
+        <h1>⚡ <span>L'Intello</span></h1>
+        <p>Smart AI backend — ask anything</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="input-box">
+      <div class="input-tools">
+        <label title="Attach file">📎<input type="file" id="fileInput" hidden></label>
+        <button title="Google Drive" onclick="promptGDrive()">🔗</button>
+      </div>
+      <textarea id="prompt" rows="1" placeholder="Message L'Intello..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="send()">➤</button>
+    </div>
+    <div class="attach-info" id="attachInfo"></div>
+  </div>
 </div>
 
-<!-- Provider modal -->
-<div class="modal-bg" id="providerModal">
-  <div class="modal">
-    <span class="close" onclick="closeProviders()">✕</span>
-    <h2>Providers</h2>
+<!-- Provider Modal (reuse existing logic) -->
+<div id="providerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:30;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:500px;max-height:80vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+      <h2 style="font-size:1rem">Providers</h2>
+      <span onclick="closeProviders()" style="cursor:pointer;color:var(--muted);font-size:1.2rem">✕</span>
+    </div>
     <div id="providerList"></div>
     <hr style="border-color:var(--border);margin:16px 0">
-    <h2>Add API Key</h2>
-    <input type="text" id="keyName" placeholder="ENV variable, e.g. GROQ_API_KEY">
-    <input type="text" id="keyValue" placeholder="Key value">
-    <button class="add-key-btn" onclick="addKey()">Add Key</button>
+    <h3 style="font-size:.9rem;margin-bottom:8px">Add API Key</h3>
+    <input type="text" id="keyName" placeholder="ENV variable" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;width:100%;margin:4px 0;font-size:.85rem">
+    <input type="text" id="keyValue" placeholder="Key value" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;width:100%;margin:4px 0;font-size:.85rem">
+    <button onclick="addKey()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:.85rem;margin-top:4px">Add Key</button>
   </div>
 </div>
 
 <script>
-const chat = document.getElementById('chat');
+const chatEl = document.getElementById('chat');
+const chatInner = document.getElementById('chatInner');
 const promptEl = document.getElementById('prompt');
 const fileInput = document.getElementById('fileInput');
-const attachInfo = document.getElementById('attachInfo');
-let attachedFile = null;
-let gdriveUrl = '';
-let gdriveAuth = false;
-let conversationId = null;
+let attachedFile = null, gdriveUrl = '', conversationId = null;
 
-// Check GDrive status on load
-fetch('/api/gdrive/status').then(r=>r.json()).then(d => {
-  gdriveAuth = d.authenticated;
-  const el = document.getElementById('gdriveStatus');
-  if (d.authenticated) el.innerHTML = '🟢 GDrive';
-  else if (d.configured) el.innerHTML = '<a href="/api/gdrive/auth" style="color:var(--yellow)">🔑 GDrive</a>';
-});
+function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 200) + 'px'; }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-function newConversation() { conversationId = null; chat.innerHTML = ''; addMsg('system','New conversation started.'); }
-
-async function openConversations() {
-  const r = await fetch('/api/conversations');
-  const convs = await r.json();
-  let html = '<b>Recent conversations:</b><br><br>';
-  for (const c of convs) {
-    const d = new Date(c.created_at*1000).toLocaleString();
-    const summary = c.summary ? c.summary.substring(0,80)+'…' : '(no summary)';
-    html += `<div style="cursor:pointer;padding:6px;border-bottom:1px solid var(--border)" onclick="loadConversation('${c.id}')">`
-         + `<span style="color:var(--accent)">${d}</span><br><span style="color:var(--muted);font-size:.85rem">${esc(summary)}</span></div>`;
-  }
-  if (!convs.length) html += '<span style="color:var(--muted)">No conversations yet.</span>';
-  addMsg('system', html);
-}
-
-async function loadConversation(id) {
-  conversationId = id;
-  chat.innerHTML = '';
-  const r = await fetch(`/api/conversations/${id}`);
-  const data = await r.json();
-  if (data.summary) addMsg('plan', '<span class="label">📝 Summary</span>' + esc(data.summary));
-  for (const m of data.messages) {
-    addMsg(m.role === 'user' ? 'user' : 'system', esc(m.content));
-  }
-}
-
-// Auto-resize textarea
-promptEl.addEventListener('input', () => {
-  promptEl.style.height = 'auto';
-  promptEl.style.height = Math.min(promptEl.scrollHeight, 200) + 'px';
-});
-
-fileInput.addEventListener('change', () => {
-  attachedFile = fileInput.files[0] || null;
-  renderAttach();
-});
-
-function promptGDrive() {
-  if (!gdriveAuth) {
-    // Not authenticated — offer to connect or paste public link
-    const choice = window.confirm('Google Drive not connected.\n\nOK = Connect (OAuth)\nCancel = Paste a public link instead');
-    if (choice) { window.location.href = '/api/gdrive/auth'; return; }
-  }
-  const url = window.prompt('Paste a Google Drive sharing link:');
-  if (url) { gdriveUrl = url; renderAttach(); }
-}
-
+fileInput.addEventListener('change', () => { attachedFile = fileInput.files[0] || null; renderAttach(); });
+function promptGDrive() { const u = prompt('Google Drive URL:'); if (u) { gdriveUrl = u; renderAttach(); } }
 function renderAttach() {
-  let html = '';
-  if (attachedFile) html += `<span class="tag">📄 ${attachedFile.name} <span class="x" onclick="removeFile()">✕</span></span>`;
-  if (gdriveUrl) html += `<span class="tag">🔗 GDrive <span class="x" onclick="removeGDrive()">✕</span></span>`;
-  attachInfo.innerHTML = html;
+  let h = '';
+  if (attachedFile) h += `<span class="attach-tag">📄 ${attachedFile.name} <span class="x" onclick="attachedFile=null;fileInput.value='';renderAttach()">✕</span></span>`;
+  if (gdriveUrl) h += `<span class="attach-tag">🔗 GDrive <span class="x" onclick="gdriveUrl='';renderAttach()">✕</span></span>`;
+  document.getElementById('attachInfo').innerHTML = h;
 }
-function removeFile() { attachedFile = null; fileInput.value = ''; renderAttach(); }
-function removeGDrive() { gdriveUrl = ''; renderAttach(); }
 
-function addMsg(cls, html) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  d.innerHTML = html;
-  chat.appendChild(d);
-  chat.scrollTop = chat.scrollHeight;
+function addMsg(role, html, meta) {
+  // Remove empty state
+  const empty = chatInner.querySelector('.empty'); if (empty) empty.remove();
+  const d = document.createElement('div'); d.className = 'msg';
+  d.innerHTML = `<div class="role ${role}">${role}</div><div class="content">${html}</div>${meta ? `<div class="meta">${meta}</div>` : ''}`;
+  chatInner.appendChild(d);
+  chatEl.scrollTop = chatEl.scrollHeight;
   return d;
 }
 
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-}
+function newConversation() { conversationId = null; chatInner.innerHTML = '<div class="empty"><h1>⚡ <span>L\'Intello</span></h1><p>Smart AI backend — ask anything</p></div>'; }
 
-async function send(confirmPaid = false, savedPrompt = null) {
+async function send(confirmPaid, savedPrompt) {
   const text = savedPrompt || promptEl.value.trim();
   if (!text && !confirmPaid) return;
-
-  if (!confirmPaid) {
-    addMsg('user', esc(text) + attachBadges());
-    promptEl.value = ''; promptEl.style.height = 'auto';
-  }
+  if (!confirmPaid) { addMsg('user', esc(text)); promptEl.value = ''; promptEl.style.height = 'auto'; }
 
   const fd = new FormData();
   fd.append('prompt', text);
   fd.append('confirm_paid', confirmPaid ? 'true' : 'false');
   fd.append('mode', document.getElementById('modeSelect').value);
   if (conversationId) fd.append('conversation_id', conversationId);
-  if (attachedFile) fd.append('file', attachedFile);
-  if (gdriveUrl) fd.append('gdrive_url', gdriveUrl);
+  if (attachedFile) { fd.append('file', attachedFile); attachedFile = null; fileInput.value = ''; renderAttach(); }
+  if (gdriveUrl) { fd.append('gdrive_url', gdriveUrl); gdriveUrl = ''; renderAttach(); }
 
-  if (!confirmPaid) { attachedFile = null; gdriveUrl = ''; fileInput.value = ''; renderAttach(); }
-
-  const sendBtn = document.getElementById('sendBtn');
-  sendBtn.disabled = true;
-  const loading = addMsg('system', '<span class="label">Routing…</span>⏳');
+  const btn = document.getElementById('sendBtn'); btn.disabled = true;
+  const loading = addMsg('system', '⏳ Thinking...');
 
   try {
     const r = await fetch('/api/prompt', { method: 'POST', body: fd });
     const data = await r.json();
-    chat.removeChild(loading);
+    chatInner.removeChild(loading);
 
-    // Show plan
-    addMsg('plan', '<span class="label">📋 Routing Plan</span>' + esc(data.plan.reasoning));
-
-    // Track conversation
-    if (data.plan.conversation_id) conversationId = data.plan.conversation_id;
+    if (data.plan) {
+      if (data.plan.conversation_id) conversationId = data.plan.conversation_id;
+      const plan = document.createElement('div'); plan.className = 'plan-box';
+      plan.textContent = data.plan.reasoning;
+      chatInner.appendChild(plan);
+    }
 
     if (data.needs_confirmation) {
-      const bar = addMsg('system',
-        `<span class="cost">⚠ Paid model: ${esc(data.plan.primary)} — estimated $${data.plan.estimated_cost.toFixed(6)}</span>` +
-        `<div class="confirm-bar"><button class="yes" onclick="confirmPaid('${esc(text)}')">Proceed</button>` +
-        `<button class="no" onclick="this.parentElement.parentElement.remove()">Cancel</button></div>`);
-      window._pendingPrompt = text;
+      addMsg('system', `⚠️ Paid model: ${data.plan.primary} — $${data.plan.estimated_cost.toFixed(6)}
+<button onclick="send(true,'${esc(text)}')" style="background:var(--green);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;margin-top:6px">Proceed</button>
+<button onclick="this.parentElement.parentElement.remove()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:4px 12px;border-radius:6px;cursor:pointer;margin-left:4px">Cancel</button>`);
     } else if (data.error) {
-      addMsg('error', esc(data.error));
+      addMsg('system', `❌ ${esc(data.error)}`);
     } else if (data.response) {
-      // Show pipeline details if deep mode
-      if (data.pipeline) {
-        let pipeHtml = '<span class="label">🔬 Deep Pipeline</span>';
-        for (const s of data.pipeline.steps) pipeHtml += esc(s) + '\n';
-        pipeHtml += '\n<details><summary style="cursor:pointer;color:var(--accent)">Show drafts & review</summary>\n';
-        for (const d of data.pipeline.drafts) {
-          if (!d.degraded) pipeHtml += `\n<b>${esc(d.provider)}</b> ($${d.cost.toFixed(6)}):\n${esc(d.content).substring(0, 500)}…\n`;
-        }
-        if (data.pipeline.reviews.length) {
-          pipeHtml += `\n<b>Review (${esc(data.pipeline.reviews[0].provider)}):</b>\n${esc(data.pipeline.reviews[0].content)}\n`;
-        }
-        pipeHtml += '</details>';
-        addMsg('plan', pipeHtml);
-      }
-      // Show debate
-      if (data.debate) {
-        let debHtml = '<span class="label">⚔️ Debate</span>';
-        for (const s of data.debate.log) debHtml += esc(s) + '\n';
-        debHtml += '\n<details><summary style="cursor:pointer;color:var(--accent)">Show positions & challenges</summary>\n';
-        for (const p of data.debate.positions) {
-          if (!p.degraded) debHtml += `\n<b>📢 ${esc(p.model)}</b>:\n${esc(p.content).substring(0,600)}…\n`;
-        }
-        for (const c of data.debate.challenges) {
-          if (!c.degraded) debHtml += `\n<b>🗡️ ${esc(c.challenger)}</b>:\n${esc(c.content).substring(0,600)}…\n`;
-        }
-        debHtml += '</details>';
-        addMsg('plan', debHtml);
-      }
-      // Show chain steps
-      if (data.chain_steps) {
-        let chainHtml = '<span class="label">🔗 Chain Execution</span>';
-        for (const s of data.chain_steps) {
-          const icon = s.degraded || s.error ? '❌' : '✅';
-          chainHtml += `\n${icon} Step ${s.step}: ${esc(s.task)}`;
-          if (s.provider) chainHtml += ` → ${esc(s.provider)}`;
-        }
-        addMsg('plan', chainHtml);
-      }
-      // Show tool usage
-      if (data.tool_used) {
-        addMsg('plan', `<span class="label">🔧 Tool Used</span>${esc(data.tool_used.tool)}(${esc(JSON.stringify(data.tool_used.args))})`);
-      }
-      // Show guardrail warnings
-      if (data.guardrails && data.guardrails.issues.length) {
-        addMsg('plan', `<span class="label" style="color:var(--yellow)">⚠️ Confidence: ${(data.guardrails.confidence*100).toFixed(0)}%</span>${data.guardrails.issues.map(i => esc(i)).join(', ')}`);
-      }
-      const mid = data.response.model;
-      const tt = data.plan.task_type;
-      addMsg('system',
-        `<span class="label"><span class="model">${esc(data.response.provider)}</span> · ${esc(mid)} · ` +
-        `tokens ${data.response.input_tokens}→${data.response.output_tokens} · ` +
-        `<span class="cost">$${data.response.cost.toFixed(6)}</span>` +
-        `${data.mode === 'deep' ? ' · 🔬 deep' : ''}</span>` +
-        esc(data.response.content) +
-        `\n<div style="margin-top:8px;display:flex;gap:4px">` +
-        [1,2,3,4,5].map(n =>
-          `<button onclick="sendFeedback('${esc(mid)}','${esc(tt)}',${n});this.parentElement.innerHTML='✅ Rated ${n}/5'" `+
-          `style="background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:.75rem">${'⭐'.repeat(n)}</button>`
-        ).join('') + `</div>`);
+      const r = data.response;
+      const meta = `<span class="model">${esc(r.provider)}</span> · ${esc(r.model)} · ${r.input_tokens}→${r.output_tokens} tokens · <span class="cost">$${r.cost.toFixed(6)}</span>${data.mode !== 'fast' ? ` · ${data.mode}` : ''}`;
+      addMsg('assistant', esc(r.content), meta);
     }
+    loadConversations();
   } catch (e) {
-    chat.removeChild(loading);
-    addMsg('error', 'Request failed: ' + esc(e.message));
+    chatInner.removeChild(loading);
+    addMsg('system', `❌ ${esc(e.message)}`);
   }
-  sendBtn.disabled = false;
+  btn.disabled = false;
 }
 
-function confirmPaid() { send(true, window._pendingPrompt); }
+// Conversations
+async function loadConversations() {
+  try {
+    const r = await fetch('/api/conversations');
+    const convs = await r.json();
+    const el = document.getElementById('convList');
+    el.innerHTML = convs.map(c => {
+      const d = new Date(c.created_at * 1000);
+      const label = c.summary ? c.summary.substring(0, 40) : d.toLocaleDateString();
+      const active = c.id === conversationId ? ' active' : '';
+      return `<div class="conv-item${active}" onclick="loadConv('${c.id}')">${esc(label)}</div>`;
+    }).join('');
+  } catch(e) {}
+}
 
-async function sendFeedback(modelId, taskType, rating) {
+async function loadConv(id) {
+  conversationId = id;
+  chatInner.innerHTML = '';
+  const r = await fetch(`/api/conversations/${id}`);
+  const data = await r.json();
+  if (data.summary) { const p = document.createElement('div'); p.className = 'plan-box'; p.textContent = data.summary; chatInner.appendChild(p); }
+  for (const m of data.messages) addMsg(m.role === 'user' ? 'user' : 'assistant', esc(m.content));
+  loadConversations();
+}
+
+// Providers
+function openProviders() { document.getElementById('providerModal').style.display = 'flex'; refreshProviders(); }
+function closeProviders() { document.getElementById('providerModal').style.display = 'none'; }
+async function refreshProviders() {
+  const r = await fetch('/api/providers');
+  const providers = await r.json();
+  document.getElementById('providerList').innerHTML = '<table style="width:100%;font-size:.8rem;border-collapse:collapse">' +
+    '<tr><th style="text-align:left;padding:4px">Provider</th><th>Status</th><th>Quota</th></tr>' +
+    providers.map(p => {
+      const s = p.available ? '🟢' : '🔴';
+      const q = p.daily_limit > 0 ? `${p.remaining}/${p.daily_limit}` : '∞';
+      return `<tr><td style="padding:4px">${esc(p.name)}</td><td style="text-align:center">${s}</td><td style="text-align:center;color:var(--muted)">${q}</td></tr>`;
+    }).join('') + '</table>';
+}
+async function addKey() {
   const fd = new FormData();
-  fd.append('model_id', modelId);
-  fd.append('task_type', taskType);
-  fd.append('rating', rating);
-  await fetch('/api/feedback', { method: 'POST', body: fd });
-}
-
-function attachBadges() {
-  let s = '';
-  if (attachedFile) s += ` <span style="font-size:.8rem;opacity:.7">📎 ${esc(attachedFile.name)}</span>`;
-  if (gdriveUrl) s += ' <span style="font-size:.8rem;opacity:.7">🔗 GDrive</span>';
-  return s;
+  fd.append('env_key', document.getElementById('keyName').value);
+  fd.append('value', document.getElementById('keyValue').value);
+  await fetch('/api/key', { method: 'POST', body: fd });
+  document.getElementById('keyName').value = '';
+  document.getElementById('keyValue').value = '';
+  refreshProviders();
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
-// Providers modal
-async function openProviders() {
-  document.getElementById('providerModal').classList.add('open');
-  const r = await fetch('/api/providers');
-  const providers = await r.json();
-  let html = '<table><tr><th>Provider</th><th>Tier</th><th>Status</th><th>Key</th><th>Quota</th></tr>';
-  for (const p of providers) {
-    const tier = p.tier === 'free' ? '🆓' : '💰';
-    const status = p.available ? '<span style="color:var(--green)">✅ ready</span>' : '<span style="color:var(--red)">❌</span>';
-    const key = p.has_key ? '✅' : `❌ ${esc(p.env_key)}`;
-    let quota = '∞';
-    if (p.daily_limit > 0) {
-      const pct = p.remaining / p.daily_limit;
-      const color = pct < 0.1 ? 'var(--red)' : pct < 0.3 ? 'var(--yellow)' : 'var(--green)';
-      quota = `<span style="color:${color}">${p.remaining}/${p.daily_limit}</span>`;
-    }
-    html += `<tr><td>${esc(p.name)}</td><td>${tier}</td><td>${status}</td><td>${key}</td><td>${quota}</td></tr>`;
-  }
-  html += '</table>';
-  document.getElementById('providerList').innerHTML = html;
-}
-function closeProviders() { document.getElementById('providerModal').classList.remove('open'); }
-
-async function addKey() {
-  const name = document.getElementById('keyName').value.trim();
-  const val = document.getElementById('keyValue').value.trim();
-  if (!name || !val) return;
-  const fd = new FormData();
-  fd.append('env_key', name); fd.append('value', val);
-  await fetch('/api/key', { method: 'POST', body: fd });
-  document.getElementById('keyName').value = '';
-  document.getElementById('keyValue').value = '';
-  openProviders(); // refresh
-}
+// Init
+loadConversations();
 </script>
 </body>
 </html>
