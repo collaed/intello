@@ -10,7 +10,7 @@ from typing import Optional
 
 import base64
 from fastapi import FastAPI, UploadFile, File, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from intello.models import Tier
@@ -34,6 +34,9 @@ from intello import workflow as wf
 from intello import writing_tools as wt
 from intello import ocr
 from intello import ocr_engines
+from intello import scheduler
+from intello import imagegen
+from intello import webhooks
 
 app = FastAPI(title="L'Intello")
 
@@ -1343,6 +1346,189 @@ async def literary_page():
         return f.read()
 
 
+@app.get("/corkboard", response_class=HTMLResponse)
+async def corkboard_page():
+    with open(os.path.join(os.path.dirname(__file__), "static", "corkboard.html")) as f:
+        return f.read()
+
+
+# --- Scheduled Tasks (#3) ---
+
+@app.get("/api/scheduler/tasks")
+async def api_scheduler_list():
+    return scheduler.list_tasks()
+
+
+@app.post("/api/scheduler/tasks")
+async def api_scheduler_create(
+    name: str = Form(...), prompt: str = Form(...), schedule: str = Form("daily"),
+):
+    import uuid as _uuid
+    tid = _uuid.uuid4().hex[:8]
+    return scheduler.create_task(tid, name, prompt, schedule)
+
+
+@app.delete("/api/scheduler/tasks/{task_id}")
+async def api_scheduler_delete(task_id: str):
+    scheduler.delete_task(task_id)
+    return {"ok": True}
+
+
+@app.post("/api/scheduler/run")
+async def api_scheduler_run_due():
+    """Run all due scheduled tasks now."""
+    due = scheduler.get_due_tasks()
+    results = []
+    for task in due:
+        plan = build_plan(task["prompt"], _providers)
+        if plan.primary:
+            result = await execute(plan.primary, task["prompt"], max_tokens=2000)
+            scheduler.record_result(task["task_id"], result.content if not result.degraded else "Failed")
+            results.append({"task": task["name"], "status": "done" if not result.degraded else "failed"})
+        else:
+            results.append({"task": task["name"], "status": "no_provider"})
+    return {"ran": len(results), "results": results}
+
+
+# --- Image Generation (#4) ---
+
+@app.post("/api/v1/image/generate")
+async def api_image_gen(
+    prompt: str = Form(...), style: str = Form(""),
+):
+    return await imagegen.generate_image(prompt, _providers, style)
+
+
+# --- Voice (#5) ---
+
+@app.post("/api/v1/voice/transcribe")
+async def api_voice_transcribe(file: UploadFile = File(...)):
+    """Speech-to-text via Groq Whisper (free)."""
+    for p in _providers:
+        if p.available and p.provider == "groq":
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=p.api_key, base_url="https://api.groq.com/openai/v1")
+                audio_bytes = await file.read()
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=f"_{file.filename}", delete=False) as f:
+                    f.write(audio_bytes)
+                    tmp = f.name
+                with open(tmp, "rb") as af:
+                    transcript = await client.audio.transcriptions.create(
+                        model="whisper-large-v3-turbo", file=af)
+                os.unlink(tmp)
+                return {"text": transcript.text, "provider": "groq"}
+            except Exception as e:
+                return {"error": str(e)}
+    return {"error": "No voice provider available (need Groq)"}
+
+
+# --- Multi-Document Comparison (#6) ---
+
+@app.post("/api/literary/compare")
+async def api_literary_compare(
+    doc_id_a: str = Form(...), doc_id_b: str = Form(...),
+):
+    """Compare two documents — structure, pacing, characters, word count."""
+    info_a = literary.get_document_info(doc_id_a)
+    info_b = literary.get_document_info(doc_id_b)
+    if not info_a or not info_b:
+        return {"error": "Document not found"}
+
+    chars_a = literary.get_characters(doc_id_a)
+    chars_b = literary.get_characters(doc_id_b)
+    struct_a = literary.get_structure(doc_id_a)
+    struct_b = literary.get_structure(doc_id_b)
+    pacing_a = literary.get_pacing_data(doc_id_a, window=max(5, info_a["total_lines"] // 20))
+    pacing_b = literary.get_pacing_data(doc_id_b, window=max(5, info_b["total_lines"] // 20))
+
+    char_names_a = {c["name"] for c in chars_a}
+    char_names_b = {c["name"] for c in chars_b}
+
+    return {
+        "doc_a": {"title": info_a["title"], "words": info_a["total_words"],
+                  "chapters": len(struct_a), "characters": len(chars_a)},
+        "doc_b": {"title": info_b["title"], "words": info_b["total_words"],
+                  "chapters": len(struct_b), "characters": len(chars_b)},
+        "word_diff": info_b["total_words"] - info_a["total_words"],
+        "chapter_diff": len(struct_b) - len(struct_a),
+        "characters_added": list(char_names_b - char_names_a),
+        "characters_removed": list(char_names_a - char_names_b),
+        "characters_common": list(char_names_a & char_names_b),
+        "avg_tension_a": sum(p["tension"] for p in pacing_a) / len(pacing_a) if pacing_a else 0,
+        "avg_tension_b": sum(p["tension"] for p in pacing_b) / len(pacing_b) if pacing_b else 0,
+    }
+
+
+# --- Webhooks (#7) ---
+
+@app.get("/api/webhooks")
+async def api_webhooks_list():
+    return webhooks.list_webhooks()
+
+
+@app.post("/api/webhooks")
+async def api_webhooks_create(
+    name: str = Form(...), action: str = Form("chat"), config: str = Form("{}"),
+):
+    import uuid as _uuid
+    hid = _uuid.uuid4().hex[:8]
+    return webhooks.create_webhook(hid, name, action, json.loads(config))
+
+
+@app.post("/api/webhooks/{hook_id}/trigger")
+async def api_webhook_trigger(hook_id: str, request: Request):
+    """Trigger a webhook — external services call this."""
+    hook = webhooks.get_webhook(hook_id)
+    if not hook or not hook["enabled"]:
+        return {"error": "Webhook not found or disabled"}
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    prompt = body.get("prompt", hook["config"].get("default_prompt", ""))
+    if not prompt:
+        return {"error": "No prompt in payload or webhook config"}
+
+    plan = build_plan(prompt, _providers)
+    if not plan.primary:
+        return {"error": "No providers"}
+
+    result = await execute(plan.primary, prompt, max_tokens=body.get("max_tokens", 2000))
+    webhooks.log_trigger(hook_id, body, result.content if not result.degraded else "Failed")
+
+    return {"content": result.content, "provider": result.provider_name,
+            "model": result.model_id, "cost": result.cost}
+
+
+@app.delete("/api/webhooks/{hook_id}")
+async def api_webhook_delete(hook_id: str):
+    webhooks.delete_webhook(hook_id)
+    return {"ok": True}
+
+
+# --- Scheduler background loop ---
+
+async def _scheduler_loop():
+    """Background task that runs due scheduled tasks every 60 seconds."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            due = scheduler.get_due_tasks()
+            for task in due:
+                plan = build_plan(task["prompt"], _providers)
+                if plan.primary:
+                    result = await execute(plan.primary, task["prompt"], max_tokens=2000)
+                    scheduler.record_result(task["task_id"],
+                                            result.content if not result.degraded else "Failed")
+        except Exception:
+            pass
+
+
+@app.on_event("startup")
+async def start_scheduler():
+    asyncio.create_task(_scheduler_loop())
+
+
 # --- OCR Service ---
 
 @app.post("/api/v1/ocr")
@@ -1512,6 +1698,58 @@ async def openai_chat_completions(request: Request):
     return _openai_response(result.content, result.provider_name, result.model_id,
                             result.input_tokens, result.output_tokens, False)
 
+
+
+@app.post("/v1/chat/completions/stream")
+async def openai_chat_stream(request: Request):
+    """SSE streaming chat endpoint."""
+    body = await request.json()
+    messages = body.get("messages", [])
+    max_tokens = body.get("max_tokens", 4096)
+
+    system_msg = None
+    user_msg = ""
+    for m in messages:
+        if m["role"] == "system": system_msg = m["content"]
+        elif m["role"] == "user": user_msg = m["content"]
+
+    if not user_msg:
+        return JSONResponse({"error": "No user message"}, 400)
+
+    plan = build_plan(user_msg, _providers)
+    if not plan.primary:
+        return JSONResponse({"error": "No providers"}, 503)
+
+    async def generate():
+        # For providers with OpenAI-compatible streaming
+        provider = plan.primary
+        try:
+            from openai import AsyncOpenAI
+            base_urls = {"openai": None, "groq": "https://api.groq.com/openai/v1",
+                         "mistral": "https://api.mistral.ai/v1", "deepseek": "https://api.deepseek.com",
+                         "openrouter": "https://openrouter.ai/api/v1", "xai": "https://api.x.ai/v1"}
+            base = base_urls.get(provider.provider)
+            if base is not None or provider.provider == "openai":
+                kwargs = {"api_key": provider.api_key}
+                if base: kwargs["base_url"] = base
+                client = AsyncOpenAI(**kwargs)
+                msgs = [{"role": "system", "content": system_msg or "You are a helpful assistant."},
+                        {"role": "user", "content": user_msg}]
+                stream = await client.chat.completions.create(
+                    model=provider.model_id, messages=msgs, max_tokens=max_tokens, stream=True)
+                async for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        text = chunk.choices[0].delta.content
+                        yield f"data: {json.dumps({'content': text})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'provider': provider.name, 'model': provider.model_id})}\n\n"
+                return
+        except Exception:
+            pass
+        # Fallback: non-streaming, send all at once
+        result = await execute(provider, user_msg, max_tokens=max_tokens, system=system_msg)
+        yield f"data: {json.dumps({'content': result.content, 'done': True, 'provider': result.provider_name})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 def _openai_response(content, provider, model, inp_tokens, out_tokens, was_cached):
     """Format response in OpenAI chat/completions format."""

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L'Intello — Corkboard</title>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e4e4e7;
+           --muted: #71717a; --accent: #6366f1; --green: #22c55e; --red: #ef4444; --yellow: #eab308; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #2a1f14; color: var(--text); min-height: 100vh; }
+  header { padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.1rem; }
+  a { color: var(--accent); text-decoration: none; }
+  .board { display: flex; flex-wrap: wrap; gap: 16px; padding: 24px; min-height: 80vh; align-content: flex-start; }
+  .card { width: 220px; min-height: 160px; background: #fef3c7; color: #1a1a1a; border-radius: 4px;
+          padding: 12px; font-family: 'Georgia', serif; font-size: .85rem; cursor: grab;
+          box-shadow: 2px 3px 8px rgba(0,0,0,.3); position: relative; transition: transform .1s; }
+  .card:active { cursor: grabbing; transform: rotate(-2deg) scale(1.05); z-index: 10; }
+  .card .title { font-weight: bold; font-size: .9rem; margin-bottom: 6px; color: #92400e;
+                 border-bottom: 1px solid #d4a574; padding-bottom: 4px; }
+  .card .synopsis { font-size: .8rem; line-height: 1.4; color: #44403c; }
+  .card .meta { position: absolute; bottom: 6px; right: 8px; font-size: .7rem; color: #a8a29e; }
+  .card .status { position: absolute; top: 6px; right: 8px; font-size: .7rem; padding: 1px 6px;
+                  border-radius: 3px; }
+  .status-draft { background: #fde68a; color: #92400e; }
+  .status-revised { background: #bbf7d0; color: #166534; }
+  .status-final { background: #bfdbfe; color: #1e40af; }
+  .add-card { width: 220px; min-height: 160px; border: 2px dashed #5c4a3a; border-radius: 4px;
+              display: flex; align-items: center; justify-content: center; cursor: pointer;
+              color: #8b7355; font-size: 2rem; }
+  .add-card:hover { border-color: var(--accent); color: var(--accent); }
+  select, input, textarea { background: #fef3c7; border: 1px solid #d4a574; color: #1a1a1a;
+                             padding: 6px; border-radius: 4px; font-size: .85rem; width: 100%; margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📌 Corkboard</h1>
+  <div style="display:flex;gap:8px">
+    <select id="docSelect" onchange="loadBoard()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px;font-size:.85rem">
+      <option value="">Select document...</option>
+    </select>
+    <a href="/">← Chat</a>
+    <a href="/literary">📚 Literary</a>
+  </div>
+</header>
+<div class="board" id="board"></div>
+
+<script>
+let cards = [];
+let currentDoc = '';
+let dragCard = null;
+
+async function init() {
+  const r = await fetch('/api/literary/documents');
+  const docs = await r.json();
+  const sel = document.getElementById('docSelect');
+  for (const d of docs) sel.innerHTML += `<option value="${d.doc_id}">${d.title}</option>`;
+}
+
+async function loadBoard() {
+  currentDoc = document.getElementById('docSelect').value;
+  if (!currentDoc) return;
+  const r = await fetch(`/api/literary/${currentDoc}`);
+  const data = await r.json();
+  cards = data.structure.map((s, i) => {
+    const meta = JSON.parse(s.metadata);
+    return { id: i, title: meta.title, lines: `L${s.start_line}-${s.end_line}`,
+             synopsis: '', status: 'draft', order: i };
+  });
+  renderBoard();
+}
+
+function renderBoard() {
+  const board = document.getElementById('board');
+  cards.sort((a, b) => a.order - b.order);
+  board.innerHTML = cards.map(c => `
+    <div class="card" draggable="true" ondragstart="dragStart(event,${c.id})"
+         ondragover="event.preventDefault()" ondrop="drop(event,${c.id})">
+      <span class="status status-${c.status}">${c.status}</span>
+      <div class="title">${esc(c.title)}</div>
+      <div class="synopsis" contenteditable="true" onblur="updateSynopsis(${c.id},this.textContent)"
+           placeholder="Synopsis...">${esc(c.synopsis)}</div>
+      <div class="meta">${c.lines}</div>
+    </div>
+  `).join('') + '<div class="add-card" onclick="addCard()">+</div>';
+}
+
+function dragStart(e, id) { dragCard = id; e.dataTransfer.effectAllowed = 'move'; }
+function drop(e, targetId) {
+  e.preventDefault();
+  if (dragCard === null || dragCard === targetId) return;
+  const from = cards.find(c => c.id === dragCard);
+  const to = cards.find(c => c.id === targetId);
+  const tmp = from.order; from.order = to.order; to.order = tmp;
+  renderBoard();
+  dragCard = null;
+}
+
+function updateSynopsis(id, text) { const c = cards.find(c => c.id === id); if (c) c.synopsis = text; }
+
+function addCard() {
+  const id = cards.length;
+  cards.push({ id, title: 'New Scene', lines: '', synopsis: '', status: 'draft', order: id });
+  renderBoard();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+init();
+</script>
+</body>
+</html>
