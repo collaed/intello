@@ -215,6 +215,47 @@ async def gdrive_callback(request: Request, code: str):
     return RedirectResponse("/")
 
 
+# --- Google Drive Browser ---
+
+@app.get("/api/gdrive/browse")
+async def api_gdrive_browse(folder_id: str = "root", q: str = ""):
+    if not gdrive.is_authenticated():
+        return {"error": "Not authenticated with Google Drive"}
+    return gdrive.list_folder(folder_id, q)
+
+
+@app.post("/api/gdrive/batch")
+async def api_gdrive_batch(request: Request):
+    """Fetch multiple files by ID. Body: {"file_ids": ["id1", "id2", ...]}"""
+    body = await request.json()
+    file_ids = body.get("file_ids", [])
+    if not file_ids:
+        return {"error": "No file_ids provided"}
+    return gdrive.batch_fetch(file_ids)
+
+
+@app.post("/api/reconstruct/{project_id}/ingest-gdrive")
+async def api_recon_ingest_gdrive(project_id: str, request: Request):
+    """Ingest multiple Google Drive files into a reconstruction project."""
+    body = await request.json()
+    file_ids = body.get("file_ids", [])
+    if not file_ids:
+        return {"error": "No file_ids"}
+
+    files = gdrive.batch_fetch(file_ids)
+    results = []
+    for f in files:
+        if f.get("error"):
+            results.append({"name": f.get("name", "?"), "error": f["error"]})
+            continue
+        r = recon.ingest_version(project_id, f["name"], f["content"])
+        results.append({"name": f["name"], **r})
+
+    return {"ingested": len([r for r in results if "error" not in r]),
+            "errors": len([r for r in results if "error" in r]),
+            "results": results}
+
+
 # --- Conversations & Memory ---
 
 @app.get("/api/conversations")
@@ -1445,6 +1486,12 @@ async def literary_page():
 @app.get("/corkboard", response_class=HTMLResponse)
 async def corkboard_page():
     with open(os.path.join(os.path.dirname(__file__), "static", "corkboard.html")) as f:
+        return f.read()
+
+
+@app.get("/gdrive", response_class=HTMLResponse)
+async def gdrive_page():
+    with open(os.path.join(os.path.dirname(__file__), "static", "gdrive.html")) as f:
         return f.read()
 
 

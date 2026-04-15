@@ -128,3 +128,80 @@ def is_authenticated() -> bool:
         return True
     except Exception:
         return False
+
+
+# --- Folder browsing & batch operations ---
+
+def list_folder(folder_id: str = "root", query: str = "") -> list[dict]:
+    """List files in a Google Drive folder."""
+    service = _get_drive_service()
+    if not service:
+        return []
+
+    q = f"'{folder_id}' in parents and trashed = false"
+    if query:
+        q += f" and name contains '{query}'"
+
+    results = []
+    page_token = None
+    while True:
+        resp = service.files().list(
+            q=q, fields="nextPageToken, files(id, name, mimeType, size, modifiedTime)",
+            pageSize=100, pageToken=page_token,
+            orderBy="folder,name"
+        ).execute()
+
+        for f in resp.get("files", []):
+            results.append({
+                "id": f["id"],
+                "name": f["name"],
+                "mime_type": f["mimeType"],
+                "is_folder": f["mimeType"] == "application/vnd.google-apps.folder",
+                "size": int(f.get("size", 0)),
+                "modified": f.get("modifiedTime", ""),
+            })
+
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    return results
+
+
+def batch_fetch(file_ids: list[str]) -> list[dict]:
+    """Fetch content of multiple files. Returns [{id, name, content, error}]."""
+    service = _get_drive_service()
+    if not service:
+        return [{"id": fid, "error": "Not authenticated"} for fid in file_ids]
+
+    results = []
+    for fid in file_ids:
+        try:
+            meta = service.files().get(fileId=fid, fields="name,mimeType").execute()
+            name = meta.get("name", fid)
+            mime = meta.get("mimeType", "")
+
+            export_mimes = {
+                "application/vnd.google-apps.document": "text/plain",
+                "application/vnd.google-apps.spreadsheet": "text/csv",
+                "application/vnd.google-apps.presentation": "text/plain",
+            }
+
+            if mime in export_mimes:
+                content = service.files().export(fileId=fid, mimeType=export_mimes[mime]).execute()
+                text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+            else:
+                from googleapiclient.http import MediaIoBaseDownload
+                buf = io.BytesIO()
+                request = service.files().get_media(fileId=fid)
+                downloader = MediaIoBaseDownload(buf, request)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+                text = buf.getvalue().decode("utf-8", errors="replace")
+
+            results.append({"id": fid, "name": name, "content": text[:100_000]})
+        except Exception as e:
+            results.append({"id": fid, "name": fid, "error": str(e)})
+
+    return results

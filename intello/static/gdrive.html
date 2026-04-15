@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L'Intello — Google Drive Browser</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #141419; --surface2: #1c1c24; --border: #2a2a35;
+           --text: #ececf1; --muted: #8e8ea0; --accent: #7c6cf0; --green: #10b981; --red: #ef4444; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 24px; }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.3rem; margin-bottom: 16px; }
+  h1 span { color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .toolbar input { background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+                   padding: 8px 12px; border-radius: 8px; font-size: .9rem; flex: 1; min-width: 200px; }
+  .btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 8px;
+         cursor: pointer; font-size: .85rem; }
+  .btn:disabled { opacity: .4; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .breadcrumb { display: flex; gap: 4px; margin-bottom: 12px; font-size: .85rem; flex-wrap: wrap; }
+  .breadcrumb span { cursor: pointer; color: var(--accent); }
+  .breadcrumb span:last-child { color: var(--text); }
+
+  .file-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .file-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+               border-bottom: 1px solid var(--border); cursor: pointer; font-size: .9rem; }
+  .file-item:last-child { border-bottom: none; }
+  .file-item:hover { background: var(--surface2); }
+  .file-item.selected { background: #1e1b2e; border-left: 3px solid var(--accent); }
+  .file-item .icon { font-size: 1.2rem; width: 24px; text-align: center; }
+  .file-item .name { flex: 1; }
+  .file-item .meta { color: var(--muted); font-size: .8rem; }
+  .file-item .check { width: 20px; height: 20px; border: 2px solid var(--border); border-radius: 4px;
+                       display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .file-item.selected .check { background: var(--accent); border-color: var(--accent); color: #fff; font-size: .8rem; }
+
+  .status { padding: 16px; background: var(--surface2); border-radius: 12px; margin-top: 16px; font-size: .85rem; }
+  .status .count { color: var(--accent); font-weight: 600; font-size: 1.1rem; }
+  .progress { margin-top: 12px; }
+  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--green); transition: width .3s; }
+  .results { margin-top: 12px; max-height: 300px; overflow-y: auto; font-size: .8rem; }
+  .results .ok { color: var(--green); }
+  .results .err { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📁 <span>Google Drive</span> Browser</h1>
+  <p style="color:var(--muted);margin-bottom:16px">Select files to import into a reconstruction project. Navigate folders, select multiple files, then ingest.</p>
+
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Search files..." oninput="debounceSearch()">
+    <select id="projectSelect" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;font-size:.85rem">
+      <option value="">Select project...</option>
+    </select>
+    <button class="btn" onclick="ingestSelected()" id="ingestBtn" disabled>
+      Ingest <span id="selectedCount">0</span> files
+    </button>
+    <a href="/" style="margin-left:auto">← Back</a>
+  </div>
+
+  <div class="breadcrumb" id="breadcrumb">
+    <span onclick="navigate('root')">My Drive</span>
+  </div>
+
+  <div class="file-list" id="fileList">
+    <div style="padding:20px;text-align:center;color:var(--muted)">Loading...</div>
+  </div>
+
+  <div class="status" id="status" style="display:none">
+    <div>Selected: <span class="count" id="statusCount">0</span> files</div>
+    <div id="statusNames" style="color:var(--muted);margin-top:4px"></div>
+    <div class="progress" id="progressArea" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      <div class="results" id="results"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentFolder = 'root';
+let folderStack = [{id: 'root', name: 'My Drive'}];
+let selected = new Map(); // id → {name, ...}
+let searchTimer = null;
+
+loadProjects();
+navigate('root');
+
+async function loadProjects() {
+  const r = await fetch('/api/reconstruct/projects');
+  const projects = await r.json();
+  const sel = document.getElementById('projectSelect');
+  for (const p of projects) sel.innerHTML += `<option value="${p.project_id}">${p.name}</option>`;
+}
+
+async function navigate(folderId, folderName) {
+  currentFolder = folderId;
+  if (folderName) {
+    const idx = folderStack.findIndex(f => f.id === folderId);
+    if (idx >= 0) folderStack = folderStack.slice(0, idx + 1);
+    else folderStack.push({id: folderId, name: folderName});
+  } else if (folderId === 'root') {
+    folderStack = [{id: 'root', name: 'My Drive'}];
+  }
+  renderBreadcrumb();
+  await loadFiles();
+}
+
+function renderBreadcrumb() {
+  document.getElementById('breadcrumb').innerHTML = folderStack.map((f, i) =>
+    i < folderStack.length - 1
+      ? `<span onclick="navigate('${f.id}','${esc(f.name)}')">${esc(f.name)}</span> /`
+      : `<span>${esc(f.name)}</span>`
+  ).join(' ');
+}
+
+async function loadFiles(query) {
+  const el = document.getElementById('fileList');
+  el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Loading...</div>';
+  const q = query ? `&q=${encodeURIComponent(query)}` : '';
+  const r = await fetch(`/api/gdrive/browse?folder_id=${currentFolder}${q}`);
+  const files = await r.json();
+
+  if (files.error) { el.innerHTML = `<div style="padding:20px;color:var(--red)">${esc(files.error)}</div>`; return; }
+  if (!files.length) { el.innerHTML = '<div style="padding:20px;color:var(--muted)">Empty folder</div>'; return; }
+
+  el.innerHTML = files.map(f => {
+    const icon = f.is_folder ? '📁' : f.name.endsWith('.pdf') ? '📕' : '📄';
+    const size = f.size ? `${(f.size/1024).toFixed(0)} KB` : '';
+    const sel = selected.has(f.id) ? ' selected' : '';
+    if (f.is_folder) {
+      return `<div class="file-item" ondblclick="navigate('${f.id}','${esc(f.name)}')">
+        <span class="icon">${icon}</span><span class="name">${esc(f.name)}</span>
+        <span class="meta">${size}</span></div>`;
+    }
+    return `<div class="file-item${sel}" onclick="toggleSelect('${f.id}','${esc(f.name)}')">
+      <div class="check">${selected.has(f.id) ? '✓' : ''}</div>
+      <span class="icon">${icon}</span><span class="name">${esc(f.name)}</span>
+      <span class="meta">${size}</span></div>`;
+  }).join('');
+}
+
+function toggleSelect(id, name) {
+  if (selected.has(id)) selected.delete(id);
+  else selected.set(id, name);
+  updateStatus();
+  loadFiles(); // re-render to show selection
+}
+
+function updateStatus() {
+  const n = selected.size;
+  document.getElementById('selectedCount').textContent = n;
+  document.getElementById('statusCount').textContent = n;
+  document.getElementById('ingestBtn').disabled = n === 0;
+  document.getElementById('status').style.display = n > 0 ? 'block' : 'none';
+  document.getElementById('statusNames').textContent = [...selected.values()].join(', ');
+}
+
+async function ingestSelected() {
+  const pid = document.getElementById('projectSelect').value;
+  if (!pid) { alert('Select a reconstruction project first'); return; }
+  if (!selected.size) return;
+
+  const btn = document.getElementById('ingestBtn');
+  btn.disabled = true; btn.textContent = 'Ingesting...';
+  document.getElementById('progressArea').style.display = 'block';
+
+  const ids = [...selected.keys()];
+  const r = await fetch(`/api/reconstruct/${pid}/ingest-gdrive`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({file_ids: ids}),
+  });
+  const data = await r.json();
+
+  document.getElementById('progressFill').style.width = '100%';
+  const res = document.getElementById('results');
+  res.innerHTML = data.results.map(r =>
+    r.error ? `<div class="err">❌ ${esc(r.name)}: ${esc(r.error)}</div>`
+            : `<div class="ok">✅ ${esc(r.name)} — ${r.version} (${r.sections} sections)</div>`
+  ).join('');
+
+  btn.textContent = `✅ ${data.ingested} ingested`;
+  selected.clear();
+  updateStatus();
+}
+
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadFiles(document.getElementById('search').value), 300);
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+</script>
+</body>
+</html>
