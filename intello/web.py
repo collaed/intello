@@ -33,6 +33,7 @@ from intello.guardrails import check_confidence, check_word_count
 from intello import workflow as wf
 from intello import writing_tools as wt
 from intello import ocr
+from intello import ocr_engines
 
 app = FastAPI(title="L'Intello")
 
@@ -1349,15 +1350,16 @@ async def api_ocr_image(
     file: UploadFile = File(...),
     language: str = Form("eng"),
     output: str = Form("json"),
+    quality: str = Form("auto"),  # fast | auto | best
 ):
-    """OCR a single image."""
+    """OCR a single image. quality=auto escalates engines on low confidence."""
     import tempfile
     with tempfile.NamedTemporaryFile(suffix=f"_{file.filename}", delete=False) as f:
         content = await file.read()
         f.write(content)
         tmp = f.name
 
-    result = ocr.ocr_image(tmp, language)
+    result = await ocr_engines.smart_ocr(tmp, language, quality)
     os.unlink(tmp)
 
     if output == "text":
@@ -1553,8 +1555,14 @@ async def api_status():
         "free_available": len(free),
         "ocr": {
             "available": shutil.which("tesseract") is not None,
-            "engine": "tesseract+ocrmypdf",
+            "engines": [
+                {"name": "tesseract", "type": "local", "available": shutil.which("tesseract") is not None},
+                {"name": "ocr.space", "type": "cloud_free", "available": True},
+                {"name": "gemini_vision", "type": "llm", "available": bool(
+                    os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY_2"))},
+            ],
             "languages": ocr.get_languages(),
+            "quality_modes": ["fast", "auto", "best"],
         },
     }
 
