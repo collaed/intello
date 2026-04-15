@@ -1558,8 +1558,8 @@ async def api_status():
             "engines": [
                 {"name": "tesseract", "type": "local", "available": shutil.which("tesseract") is not None},
                 {"name": "ocr.space", "type": "cloud_free", "available": True},
-                {"name": "gemini_vision", "type": "llm", "available": bool(
-                    os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY_2"))},
+                {"name": "gemini_vision", "type": "llm", "available": any(
+                    p.available and p.provider == "google" for p in _providers)},
             ],
             "languages": ocr.get_languages(),
             "quality_modes": ["fast", "auto", "best"],
