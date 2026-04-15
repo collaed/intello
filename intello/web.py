@@ -40,9 +40,47 @@ from intello import webhooks
 
 app = FastAPI(title="L'Intello")
 
-# Auth: supports Basic auth header, cookie, or ?token= param (Cloudflare strips Basic auth)
+# Auth + user permissions
 USERS = {"eddy": "airouter2026", "ecb": "ecb2026"}
-TOKEN = os.environ.get("AIROUTER_TOKEN", "ecb2026")
+TOKEN = os.environ.get("INTELLO_TOKEN", "ecb2026")
+
+# Models restricted to specific users (everyone else gets them filtered out)
+PREMIUM_MODELS = {
+    "gemini-2.5-pro",           # Google top model
+    "claude-sonnet-4-5",        # Claude top model
+    "gpt-4o",                   # OpenAI top model
+    "grok-4-1-fast",            # x.ai
+}
+PREMIUM_USERS = {"ecb"}  # Only these users can use premium models
+
+
+def _get_user(request: Request) -> str:
+    """Extract current user from request."""
+    # From Caddy forward_auth
+    user = request.headers.get("X-Auth-User", "")
+    if user:
+        return user
+    # From Basic auth
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Basic "):
+        try:
+            import base64
+            decoded = base64.b64decode(auth[6:]).decode()
+            return decoded.split(":", 1)[0]
+        except Exception:
+            pass
+    # Docker internal = admin
+    client_ip = request.client.host if request.client else ""
+    if client_ip.startswith("172.") or client_ip == "127.0.0.1":
+        return "ecb"
+    return "anonymous"
+
+
+def filter_providers_for_user(providers: list, user: str) -> list:
+    """Filter out premium models for non-premium users."""
+    if user in PREMIUM_USERS:
+        return providers
+    return [p for p in providers if not any(pm in p.model_id for pm in PREMIUM_MODELS)]
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -1101,7 +1139,12 @@ async def api_prompt(
     confirm_paid: bool = Form(False),
     mode: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
+    request: Request = None,
 ):
+    # User-based model filtering
+    user = _get_user(request) if request else "anonymous"
+    user_providers = filter_providers_for_user(_providers, user)
+
     # Load user prefs
     prefs = memory.get_prefs()
     effective_mode = mode or prefs.get("default_mode", "auto")
@@ -1145,7 +1188,7 @@ async def api_prompt(
     if memory.needs_compression(conv_id):
         asyncio.create_task(_compress_context(conv_id))
 
-    plan = build_plan(full_prompt, _providers)
+    plan = build_plan(full_prompt, user_providers)
     plan_info = {
         "task_type": plan.task_type.value,
         "estimated_tokens": plan.estimated_tokens,
@@ -1186,7 +1229,7 @@ async def api_prompt(
     # --- Debate mode ---
     if effective_mode == "debate":
         plan_info["reasoning"] += "\n⚔️ Debate mode: positions → challenges → verdict"
-        debate = await run_debate(full_prompt, _providers, system=sys_prompt)
+        debate = await run_debate(full_prompt, user_providers, system=sys_prompt)
         if debate.verdict.get("content"):
             memory.add_message(conv_id, "assistant", debate.verdict["content"],
                                debate.verdict.get("model_id", ""), debate.total_cost)
@@ -1211,7 +1254,7 @@ async def api_prompt(
     if use_deep:
         plan_info["reasoning"] += "\n🔬 Deep mode: multi-LLM draft → cross-review → synthesis"
         t0 = time.time()
-        pipe = await run_deep(full_prompt, _providers, system=sys_prompt)
+        pipe = await run_deep(full_prompt, user_providers, system=sys_prompt)
         latency = time.time() - t0
 
         if pipe.final and not pipe.final.degraded:
@@ -1247,10 +1290,10 @@ async def api_prompt(
 
     # --- Auto-chaining: check if prompt needs decomposition ---
     if effective_mode == "auto" and plan.estimated_tokens > 30:
-        complexity = await analyze_complexity(prompt, _providers)
+        complexity = await analyze_complexity(prompt, user_providers)
         if complexity.get("chain") and complexity.get("steps"):
             plan_info["reasoning"] += "\n🔗 Chain mode: decomposed into " + str(len(complexity["steps"])) + " sub-tasks"
-            chain_result = await execute_chain(prompt, complexity["steps"], _providers, system=sys_prompt)
+            chain_result = await execute_chain(prompt, complexity["steps"], user_providers, system=sys_prompt)
             final = chain_result["final"]
             if final.get("content"):
                 memory.add_message(conv_id, "assistant", final["content"], final.get("model", ""), final.get("cost", 0))
@@ -1642,6 +1685,8 @@ async def api_ocr_job_result(job_id: str):
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
     """OpenAI-compatible chat/completions endpoint. Works with any OpenAI SDK client."""
+    user = _get_user(request)
+    user_provs = filter_providers_for_user(_providers, user)
     body = await request.json()
     messages = body.get("messages", [])
     max_tokens = body.get("max_tokens", 4096)
@@ -1662,11 +1707,11 @@ async def openai_chat_completions(request: Request):
         return JSONResponse({"error": {"message": "No user message", "type": "invalid_request"}}, 400)
 
     # Route
-    plan = build_plan(user_msg, _providers, prefer_free=prefer_free)
+    plan = build_plan(user_msg, user_provs, prefer_free=prefer_free)
 
     # If model_hint matches a specific provider, prefer it
     if model_hint:
-        for p in _providers:
+        for p in user_provs:
             if p.available and (model_hint in p.model_id or model_hint in p.name.lower()):
                 plan.primary = p
                 break

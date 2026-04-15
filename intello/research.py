@@ -121,6 +121,11 @@ BASELINE_PROVIDERS: list[LLMProvider] = [
                 [TaskType.GENERAL, TaskType.CODE, TaskType.ANALYSIS, TaskType.CREATIVE],
                 0.003, 0.012, "XAI_API_KEY",
                 notes="x.ai credit-based"),
+    # --- PREMIUM (pay-as-you-go, user-restricted) ---
+    LLMProvider("Gemini 2.5 Pro (paid)", "gemini-2.5-pro", "google", Tier.PAID, 1_000_000,
+                [TaskType.CODE, TaskType.MATH, TaskType.ANALYSIS, TaskType.LONG_CONTEXT, TaskType.CREATIVE],
+                0.00125, 0.01, "GOOGLE_API_KEY",
+                notes="Premium: pay-as-you-go, admin only"),
 ]
 
 REFERENCE_URLS = [
