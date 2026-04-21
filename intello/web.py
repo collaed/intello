@@ -1553,6 +1553,7 @@ async def api_image_gen(
 # --- Speech Services (Piper TTS + Groq Whisper STT) ---
 
 from intello import speech
+from intello import costs
 
 @app.post("/api/v1/voice/transcribe")
 async def api_voice_transcribe(
@@ -1570,23 +1571,49 @@ async def api_voice_synthesize(
     language: str = Form("en"),
     voice: str = Form(""),
     engine: str = Form("auto"),
+    project_id: str = Form(""),
+    request: Request = None,
 ):
-    """Text-to-speech. engine=auto uses Groq Orpheus for EN (best quality), Piper for FR.
-    Groq voices: tara, leah, jess, leo, dan, mara, troy, austin, hannah.
-    Supports expressive tags in text: [cheerful] [sad] [whisper] [laughing]"""
+    """Text-to-speech. engine: auto|groq|voxtral|piper.
+    auto = Groq Orpheus (EN free), Voxtral (FR paid), Piper (fallback).
+    Voxtral costs $0.016/1K chars — checked against budget."""
 
-    # Auto: Groq for English (better quality), Piper for French (only local option)
+    user = _get_user(request) if request else "anonymous"
+
+    # Auto engine selection
     if engine == "auto":
-        engine = "groq" if language.startswith("en") else "piper"
+        if language.startswith("fr"):
+            engine = "voxtral"  # best French quality
+        else:
+            engine = "groq"     # best English, free
 
+    # Voxtral (paid) — check budget first
+    if engine == "voxtral":
+        est_cost = costs.estimate_tts_cost(text, "voxtral")
+        budget_check = costs.check_budget(est_cost, "global")
+        if not budget_check["allowed"]:
+            # Fall back to Piper instead of refusing
+            engine = "piper"
+        else:
+            audio = await speech.synthesize_voxtral(text, voice)
+            if audio:
+                costs.record_cost("tts", "voxtral", len(text), "characters",
+                                  est_cost, f"TTS {language} {len(text)} chars",
+                                  project_id, user)
+                return Response(audio, media_type="audio/wav",
+                                headers={"Content-Disposition": "attachment; filename=speech_voxtral.wav",
+                                         "X-Cost-USD": str(round(est_cost, 6))})
+            engine = "piper"  # fallback
+
+    # Groq Orpheus (free, EN only)
     if engine == "groq":
         audio = await speech.synthesize_groq(text, voice or "tara")
         if audio:
             return Response(audio, media_type="audio/wav",
-                            headers={"Content-Disposition": f"attachment; filename=speech_groq.wav"})
-        # Fall back to Piper
+                            headers={"Content-Disposition": "attachment; filename=speech_groq.wav"})
         engine = "piper"
 
+    # Piper (free, local, EN+FR)
     if engine == "piper":
         if not speech.tts_available():
             return {"error": "Piper TTS not installed"}
@@ -1604,22 +1631,58 @@ async def api_voice_list():
     return {
         "engines": {
             "groq_orpheus": {
-                "available": True,
-                "quality": "excellent (expressive, human-like)",
-                "languages": ["en"],
-                "voices": speech.GROQ_VOICES,
-                "expressive_tags": ["[cheerful]", "[sad]", "[whisper]", "[laughing]", "[surprised]"],
+                "quality": "excellent", "cost": "free",
+                "languages": ["en"], "voices": speech.GROQ_VOICES,
+                "expressive_tags": ["[cheerful]", "[sad]", "[whisper]", "[laughing]"],
+            },
+            "voxtral": {
+                "quality": "excellent", "cost": "$0.016/1K chars",
+                "languages": ["en", "fr", "de", "es", "it", "pt", "nl", "ru", "ar"],
+                "note": "Budget-controlled, falls back to Piper if over budget",
             },
             "piper": {
-                "available": speech.tts_available(),
-                "quality": "good (robotic but reliable)",
+                "quality": "good", "cost": "free (local)",
                 "languages": ["en", "fr"],
                 "voices": [v["id"] for v in speech.get_available_voices()],
             },
         },
-        "stt_provider": "groq (whisper-large-v3-turbo)",
-        "stt_daily_limit": "28,800 seconds (~480 minutes)",
+        "stt": {"provider": "groq", "model": "whisper-large-v3-turbo",
+                "daily_limit": "28,800 seconds"},
     }
+
+
+# --- Cost Management ---
+
+@app.get("/api/costs")
+async def api_costs_summary():
+    return {
+        "today": costs.get_spending("global", "", "today"),
+        "month": costs.get_spending("global", "", "month"),
+        "all_time": costs.get_spending("global", "", "all"),
+    }
+
+
+@app.get("/api/costs/project/{project_id}")
+async def api_costs_project(project_id: str):
+    return costs.get_spending("project", project_id, "all")
+
+
+@app.post("/api/costs/budget")
+async def api_set_budget(
+    scope: str = Form("global"),
+    scope_id: str = Form(""),
+    daily: float = Form(0),
+    monthly: float = Form(0),
+    total: float = Form(0),
+):
+    """Set spending limits. scope: global|project|user."""
+    costs.set_budget(scope, scope_id, daily, monthly, total)
+    return {"ok": True, "budget": costs.get_budget(scope, scope_id)}
+
+
+@app.get("/api/costs/budget")
+async def api_get_budget(scope: str = "global", scope_id: str = ""):
+    return costs.get_budget(scope, scope_id) or {"message": "No budget set (unlimited)"}
 
 
 # --- Multi-Document Comparison (#6) ---

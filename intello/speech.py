@@ -97,6 +97,51 @@ async def synthesize_groq(text: str, voice: str = "tara") -> bytes | None:
         return None
 
 
+
+async def synthesize_voxtral(text: str, voice_id: str = "") -> bytes | None:
+    """TTS via Mistral Voxtral — high quality, 9 languages including French.
+    Cost: $0.016 per 1,000 characters."""
+    import json, base64, httpx
+
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        try:
+            keys_file = os.environ.get("KEYS_FILE", "/data/api_keys.json")
+            if os.path.exists(keys_file):
+                with open(keys_file) as f:
+                    keys = json.load(f)
+                api_key = keys.get("MISTRAL_API_KEY")
+        except Exception:
+            pass
+
+    if not api_key:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            body = {
+                "model": "voxtral-mini-tts-2603",
+                "input": text[:5000],  # cap at 5K chars per request
+                "response_format": "wav",
+            }
+            if voice_id:
+                body["voice_id"] = voice_id
+
+            r = await client.post("https://api.mistral.ai/v1/audio/speech",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body)
+
+            if r.status_code != 200:
+                return None
+
+            data = r.json()
+            audio_b64 = data.get("audio_data", "")
+            if audio_b64:
+                return base64.b64decode(audio_b64)
+    except Exception:
+        pass
+    return None
+
 async def transcribe_groq(audio_bytes: bytes, filename: str = "audio.wav",
                            language: str = "") -> dict:
     """Transcribe audio using Groq's free Whisper API."""
