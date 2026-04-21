@@ -1568,25 +1568,55 @@ async def api_voice_transcribe(
 async def api_voice_synthesize(
     text: str = Form(...),
     language: str = Form("en"),
+    voice: str = Form(""),
+    engine: str = Form("auto"),
 ):
-    """Text-to-speech via Piper (local, EN + FR). Returns WAV audio."""
-    if not speech.tts_available():
-        return {"error": "Piper TTS not installed"}
+    """Text-to-speech. engine=auto uses Groq Orpheus for EN (best quality), Piper for FR.
+    Groq voices: tara, leah, jess, leo, dan, mara, troy, austin, hannah.
+    Supports expressive tags in text: [cheerful] [sad] [whisper] [laughing]"""
 
-    audio = speech.synthesize(text, language)
-    if not audio:
-        return {"error": f"TTS failed for language '{language}'"}
+    # Auto: Groq for English (better quality), Piper for French (only local option)
+    if engine == "auto":
+        engine = "groq" if language.startswith("en") else "piper"
 
-    return Response(audio, media_type="audio/wav",
-                    headers={"Content-Disposition": f"attachment; filename=speech_{language}.wav"})
+    if engine == "groq":
+        audio = await speech.synthesize_groq(text, voice or "tara")
+        if audio:
+            return Response(audio, media_type="audio/wav",
+                            headers={"Content-Disposition": f"attachment; filename=speech_groq.wav"})
+        # Fall back to Piper
+        engine = "piper"
+
+    if engine == "piper":
+        if not speech.tts_available():
+            return {"error": "Piper TTS not installed"}
+        audio = speech.synthesize(text, language)
+        if audio:
+            return Response(audio, media_type="audio/wav",
+                            headers={"Content-Disposition": f"attachment; filename=speech_{language}.wav"})
+
+    return {"error": f"TTS failed (engine={engine}, language={language})"}
 
 
 @app.get("/api/v1/voice/voices")
 async def api_voice_list():
-    """List available TTS voices."""
+    """List available TTS voices and engines."""
     return {
-        "tts_available": speech.tts_available(),
-        "voices": speech.get_available_voices(),
+        "engines": {
+            "groq_orpheus": {
+                "available": True,
+                "quality": "excellent (expressive, human-like)",
+                "languages": ["en"],
+                "voices": speech.GROQ_VOICES,
+                "expressive_tags": ["[cheerful]", "[sad]", "[whisper]", "[laughing]", "[surprised]"],
+            },
+            "piper": {
+                "available": speech.tts_available(),
+                "quality": "good (robotic but reliable)",
+                "languages": ["en", "fr"],
+                "voices": [v["id"] for v in speech.get_available_voices()],
+            },
+        },
         "stt_provider": "groq (whisper-large-v3-turbo)",
         "stt_daily_limit": "28,800 seconds (~480 minutes)",
     }

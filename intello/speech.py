@@ -31,7 +31,7 @@ def tts_available() -> bool:
 
 
 def synthesize(text: str, language: str = "en", output_format: str = "wav") -> bytes | None:
-    """Convert text to speech using Piper. Returns WAV bytes."""
+    """Convert text to speech using Piper (local). Returns WAV bytes."""
     voice_name = VOICE_MAP.get(language, VOICE_MAP.get("en"))
     voice_path = VOICES_DIR / f"{voice_name}.onnx"
 
@@ -57,6 +57,44 @@ def synthesize(text: str, language: str = "en", output_format: str = "wav") -> b
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
+
+
+GROQ_VOICES = ["tara", "leah", "jess", "leo", "dan", "mara", "troy", "austin", "hannah"]
+
+
+async def synthesize_groq(text: str, voice: str = "tara") -> bytes | None:
+    """Convert text to speech using Groq Orpheus (cloud, high quality, expressive).
+    Supports vocal directions: [cheerful] [sad] [whisper] [laughing] [surprised]
+    """
+    import json
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        try:
+            keys_file = os.environ.get("KEYS_FILE", "/data/api_keys.json")
+            if os.path.exists(keys_file):
+                with open(keys_file) as f:
+                    keys = json.load(f)
+                api_key = keys.get("GROQ_API_KEY")
+        except Exception:
+            pass
+
+    if not api_key:
+        return None
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+    try:
+        response = await client.audio.speech.create(
+            model="canopylabs/orpheus-v1-english",
+            voice=voice,
+            input=text,
+            response_format="wav",
+        )
+        return response.content
+    except Exception:
+        return None
 
 
 async def transcribe_groq(audio_bytes: bytes, filename: str = "audio.wav",
