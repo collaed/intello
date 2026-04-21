@@ -1550,29 +1550,46 @@ async def api_image_gen(
     return await imagegen.generate_image(prompt, _providers, style)
 
 
-# --- Voice (#5) ---
+# --- Speech Services (Piper TTS + Groq Whisper STT) ---
+
+from intello import speech
 
 @app.post("/api/v1/voice/transcribe")
-async def api_voice_transcribe(file: UploadFile = File(...)):
-    """Speech-to-text via Groq Whisper (free)."""
-    for p in _providers:
-        if p.available and p.provider == "groq":
-            try:
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=p.api_key, base_url="https://api.groq.com/openai/v1")
-                audio_bytes = await file.read()
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix=f"_{file.filename}", delete=False) as f:
-                    f.write(audio_bytes)
-                    tmp = f.name
-                with open(tmp, "rb") as af:
-                    transcript = await client.audio.transcriptions.create(
-                        model="whisper-large-v3-turbo", file=af)
-                os.unlink(tmp)
-                return {"text": transcript.text, "provider": "groq"}
-            except Exception as e:
-                return {"error": str(e)}
-    return {"error": "No voice provider available (need Groq)"}
+async def api_voice_transcribe(
+    file: UploadFile = File(...),
+    language: str = Form(""),
+):
+    """Speech-to-text via Groq Whisper. Free: 28,800 sec/day (~240 pages)."""
+    audio_bytes = await file.read()
+    return await speech.transcribe_groq(audio_bytes, file.filename or "audio.wav", language)
+
+
+@app.post("/api/v1/voice/synthesize")
+async def api_voice_synthesize(
+    text: str = Form(...),
+    language: str = Form("en"),
+):
+    """Text-to-speech via Piper (local, EN + FR). Returns WAV audio."""
+    if not speech.tts_available():
+        return {"error": "Piper TTS not installed"}
+
+    audio = speech.synthesize(text, language)
+    if not audio:
+        return {"error": f"TTS failed for language '{language}'"}
+
+    return Response(audio, media_type="audio/wav",
+                    headers={"Content-Disposition": f"attachment; filename=speech_{language}.wav"})
+
+
+@app.get("/api/v1/voice/voices")
+async def api_voice_list():
+    """List available TTS voices."""
+    return {
+        "tts_available": speech.tts_available(),
+        "voices": speech.get_available_voices(),
+        "stt_provider": "groq (whisper-large-v3-turbo)",
+        "stt_daily_limit": "28,800 seconds (~480 minutes)",
+    }
 
 
 # --- Multi-Document Comparison (#6) ---
@@ -2097,6 +2114,14 @@ async def api_status():
             ],
             "languages": ocr.get_languages(),
             "quality_modes": ["fast", "auto", "best"],
+        },
+        "speech": {
+            "tts_available": speech.tts_available(),
+            "tts_engine": "piper",
+            "tts_voices": [v["id"] for v in speech.get_available_voices()],
+            "stt_provider": "groq",
+            "stt_model": "whisper-large-v3-turbo",
+            "stt_daily_limit_seconds": 28800,
         },
     }
 
