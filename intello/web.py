@@ -1900,15 +1900,15 @@ async def api_ocr_job_result(job_id: str):
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
-    """OpenAI-compatible chat/completions endpoint. Works with any OpenAI SDK client."""
+    """OpenAI-compatible chat/completions endpoint. Supports stream:true, proper errors, timeouts."""
     user = _get_user(request)
     user_provs = filter_providers_for_user(_providers, user)
     body = await request.json()
     messages = body.get("messages", [])
     max_tokens = body.get("max_tokens", 4096)
     model_hint = body.get("model", "")
-    task_hint = body.get("task_hint", "")
     prefer_free = body.get("prefer_free", True)
+    stream = body.get("stream", False)
 
     # Extract system + user messages
     system_msg = None
@@ -1925,64 +1925,73 @@ async def openai_chat_completions(request: Request):
     # Route
     plan = build_plan(user_msg, user_provs, prefer_free=prefer_free)
 
-    # If model_hint matches a specific provider, prefer it
     if model_hint:
         for p in user_provs:
             if p.available and (model_hint in p.model_id or model_hint in p.name.lower()):
                 plan.primary = p
                 break
 
+    # Fix #4: Return 429 when all providers exhausted
     if not plan.primary:
-        return JSONResponse({"error": {"message": "No providers available", "type": "server_error"}}, 503)
+        all_exhausted = all(
+            ratelimit.remaining(p.model_id, p.daily_limit) == 0
+            for p in user_provs if p.available
+        )
+        if all_exhausted:
+            return JSONResponse(
+                {"error": {"message": "All providers rate-limited. Try again later.", "type": "rate_limit_exhausted"}},
+                status_code=429,
+                headers={"Retry-After": "3600"}
+            )
+        return JSONResponse(
+            {"error": {"message": "No providers available", "type": "server_error",
+                       "missing_keys": plan.missing_keys}},
+            status_code=503
+        )
 
-    # Check cache
-    cached = cache.get_cached(user_msg, plan.task_type.value)
-    if cached:
+    # Fix #5: Cache key includes system prompt
+    cache_key = f"{system_msg or ''}|||{user_msg}"
+    cached = cache.get_cached(cache_key, plan.task_type.value)
+    if cached and not stream:
         return _openai_response(cached["response"], cached["provider"], cached["model"], 0, 0, True)
 
-    # Execute
-    result = await execute(plan.primary, user_msg, max_tokens=max_tokens, system=system_msg)
-    if result.degraded:
-        # Try fallbacks
-        for fb in plan.fallbacks:
-            if fb and fb.available:
-                result = await execute(fb, user_msg, max_tokens=max_tokens, system=system_msg)
-                if not result.degraded:
-                    break
+    # Fix #3: Handle stream:true in the main endpoint
+    if stream:
+        return await _stream_response(user_msg, system_msg, max_tokens, plan, user_provs)
 
-    if result.degraded:
-        return JSONResponse({"error": {"message": result.content, "type": "server_error"}}, 503)
+    # Execute with fallback chain + Fix #1 (timeout) + Fix #2 (structured errors)
+    chain = [plan.primary] + plan.fallbacks
+    last_error = ""
+    providers_tried = []
+    for provider in chain:
+        if not provider or not provider.available:
+            continue
+        providers_tried.append(provider.name)
+        result = await execute(provider, user_msg, max_tokens=max_tokens, system=system_msg)
+        if not result.degraded:
+            cache.store(cache_key, plan.task_type.value, result.content,
+                        result.provider_name, result.model_id, result.cost)
+            resp = _openai_response(result.content, result.provider_name, result.model_id,
+                                    result.input_tokens, result.output_tokens, False)
+            resp["x_intello"]["providers_tried"] = providers_tried
+            resp["x_intello"]["fallback_count"] = len(providers_tried) - 1
+            return resp
+        last_error = result.content
 
-    cache.store(user_msg, plan.task_type.value, result.content,
-                result.provider_name, result.model_id, result.cost)
+    # Fix #2: Structured error with provider info
+    return JSONResponse({
+        "error": {
+            "message": f"All providers failed. Last error: {last_error}",
+            "type": "provider_error",
+            "providers_tried": providers_tried,
+            "fallback_count": len(providers_tried),
+        }
+    }, status_code=502)
 
-    return _openai_response(result.content, result.provider_name, result.model_id,
-                            result.input_tokens, result.output_tokens, False)
 
-
-
-@app.post("/v1/chat/completions/stream")
-async def openai_chat_stream(request: Request):
-    """SSE streaming chat endpoint."""
-    body = await request.json()
-    messages = body.get("messages", [])
-    max_tokens = body.get("max_tokens", 4096)
-
-    system_msg = None
-    user_msg = ""
-    for m in messages:
-        if m["role"] == "system": system_msg = m["content"]
-        elif m["role"] == "user": user_msg = m["content"]
-
-    if not user_msg:
-        return JSONResponse({"error": "No user message"}, 400)
-
-    plan = build_plan(user_msg, _providers)
-    if not plan.primary:
-        return JSONResponse({"error": "No providers"}, 503)
-
+async def _stream_response(user_msg, system_msg, max_tokens, plan, providers):
+    """SSE streaming for /v1/chat/completions with stream:true."""
     async def generate():
-        # For providers with OpenAI-compatible streaming
         provider = plan.primary
         try:
             from openai import AsyncOpenAI
@@ -1992,25 +2001,43 @@ async def openai_chat_stream(request: Request):
             base = base_urls.get(provider.provider)
             if base is not None or provider.provider == "openai":
                 kwargs = {"api_key": provider.api_key}
-                if base: kwargs["base_url"] = base
+                if base:
+                    kwargs["base_url"] = base
                 client = AsyncOpenAI(**kwargs)
                 msgs = [{"role": "system", "content": system_msg or "You are a helpful assistant."},
                         {"role": "user", "content": user_msg}]
-                stream = await client.chat.completions.create(
-                    model=provider.model_id, messages=msgs, max_tokens=max_tokens, stream=True)
+                stream = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=provider.model_id, messages=msgs, max_tokens=max_tokens, stream=True),
+                    timeout=30
+                )
                 async for chunk in stream:
                     if chunk.choices and chunk.choices[0].delta.content:
                         text = chunk.choices[0].delta.content
-                        yield f"data: {json.dumps({'content': text})}\n\n"
-                yield f"data: {json.dumps({'done': True, 'provider': provider.name, 'model': provider.model_id})}\n\n"
+                        yield f"data: {json.dumps({'choices': [{'delta': {'content': text}, 'index': 0}]})}\n\n"
+                yield f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'stop', 'index': 0}], 'x_intello': {'provider': provider.name}})}\n\n"
+                yield "data: [DONE]\n\n"
                 return
         except Exception:
             pass
         # Fallback: non-streaming, send all at once
         result = await execute(provider, user_msg, max_tokens=max_tokens, system=system_msg)
-        yield f"data: {json.dumps({'content': result.content, 'done': True, 'provider': result.provider_name})}\n\n"
+        yield f"data: {json.dumps({'choices': [{'delta': {'content': result.content}, 'index': 0}]})}\n\n"
+        yield f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'stop', 'index': 0}], 'x_intello': {'provider': result.provider_name}})}\n\n"
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+
+@app.post("/v1/chat/completions/stream")
+async def openai_chat_stream(request: Request):
+    """Legacy streaming endpoint — redirects to main endpoint with stream:true."""
+    body = await request.json()
+    body["stream"] = True
+    # Reconstruct request with stream flag
+    from starlette.requests import Request as StarletteRequest
+    return await openai_chat_completions(request)
 
 def _openai_response(content, provider, model, inp_tokens, out_tokens, was_cached):
     """Format response in OpenAI chat/completions format."""

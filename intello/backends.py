@@ -191,8 +191,9 @@ _BACKENDS = {
     "ollama": _call_ollama,
 }
 async def execute(provider: LLMProvider, prompt: str, max_tokens: int = 4096,
-                  system: str | None = None) -> LLMResponse:
-    """Execute a prompt against a provider, with fallback error handling."""
+                  system: str | None = None, timeout: int = 30) -> LLMResponse:
+    """Execute a prompt against a provider, with timeout and fallback error handling."""
+    import asyncio
     from . import ratelimit
 
     rem = ratelimit.remaining(provider.model_id, provider.daily_limit)
@@ -205,9 +206,15 @@ async def execute(provider: LLMProvider, prompt: str, max_tokens: int = 4096,
         return LLMResponse(provider.name, provider.model_id,
                            f"[No backend for provider: {provider.provider}]", degraded=True)
     try:
-        result = await backend(provider, prompt, max_tokens, system)
+        result = await asyncio.wait_for(
+            backend(provider, prompt, max_tokens, system),
+            timeout=timeout
+        )
         ratelimit.record_usage(provider.model_id)
         return result
+    except asyncio.TimeoutError:
+        return LLMResponse(provider.name, provider.model_id,
+                           f"[Timeout after {timeout}s]", degraded=True)
     except Exception as e:
         return LLMResponse(provider.name, provider.model_id,
                            f"[Error: {e}]", degraded=True)
