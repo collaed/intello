@@ -13,14 +13,28 @@ import numpy as np
 DB_PATH = os.environ.get("CACHE_DB", "/data/cache.db")
 
 
-@functools.lru_cache(maxsize=1)
+_embedder_instance = None
+_embedder_loading = False
+
+
 def _embedder():
+    global _embedder_instance, _embedder_loading
+    if _embedder_instance is not None:
+        return _embedder_instance
+    if _embedder_loading:
+        return None  # Avoid blocking during load
+    _embedder_loading = True
     from sentence_transformers import SentenceTransformer
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    _embedder_instance = SentenceTransformer("all-MiniLM-L6-v2")
+    _embedder_loading = False
+    return _embedder_instance
 
 
-def _embed(text: str) -> bytes:
-    vec = _embedder().encode(text, normalize_embeddings=True)
+def _embed(text: str) -> bytes | None:
+    emb = _embedder()
+    if emb is None:
+        return None
+    vec = emb.encode(text, normalize_embeddings=True)
     return pickle.dumps(vec)
 
 
@@ -84,28 +98,31 @@ def get_cached(prompt: str, task_type: str, threshold: float = 0.75, max_age_hou
             conn.execute("UPDATE cache SET hits=hits+1 WHERE prompt_hash=?", (h,))
             return dict(row)
 
-        # Semantic match
-        rows = conn.execute(
-            "SELECT * FROM cache WHERE task_type=? AND created_at>? AND embedding IS NOT NULL ORDER BY created_at DESC LIMIT 200",
-            (task_type, cutoff)).fetchall()
-        if rows:
-            prompt_emb = _embed(prompt)
-            best_score = 0
-            best_row = None
-            for row in rows:
-                score = _cosine_sim(prompt_emb, row["embedding"])
-                if score > best_score:
-                    best_score = score
-                    best_row = row
-            if best_score >= threshold and best_row:
-                conn.execute("UPDATE cache SET hits=hits+1 WHERE prompt_hash=?", (best_row["prompt_hash"],))
-                return dict(best_row)
+        # Semantic match (skip if embedder not loaded yet)
+        emb = _embedder()
+        if emb is not None:
+            rows = conn.execute(
+                "SELECT * FROM cache WHERE task_type=? AND created_at>? AND embedding IS NOT NULL ORDER BY created_at DESC LIMIT 200",
+                (task_type, cutoff)).fetchall()
+            if rows:
+                prompt_emb = _embed(prompt)
+                if prompt_emb:
+                    best_score = 0
+                    best_row = None
+                    for row in rows:
+                        score = _cosine_sim(prompt_emb, row["embedding"])
+                        if score > best_score:
+                            best_score = score
+                            best_row = row
+                    if best_score >= threshold and best_row:
+                        conn.execute("UPDATE cache SET hits=hits+1 WHERE prompt_hash=?", (best_row["prompt_hash"],))
+                        return dict(best_row)
 
     return None
 
 
 def store(prompt: str, task_type: str, response: str, provider: str, model: str, cost: float):
-    """Store a response with its embedding."""
+    """Store a response with its embedding (embedding may be None if model not loaded)."""
     h = _hash(prompt)
     emb = _embed(prompt)
     with _db() as conn:

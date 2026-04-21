@@ -162,6 +162,8 @@ async def startup():
         probe_reference_sites(),
         validate_keys(_providers),
     )
+    # Preload sentence-transformer in background (avoids first-request timeout)
+    asyncio.get_event_loop().run_in_executor(None, cache._embedder)
 
 
 def _provider_dict(p):
