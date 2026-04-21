@@ -1,4 +1,5 @@
 """LLM execution backends."""
+import os
 from .models import LLMProvider, LLMResponse
 
 SYSTEM_DEFAULT = (
@@ -125,7 +126,7 @@ async def _call_cohere(provider: LLMProvider, prompt: str, max_tokens: int, syst
 async def _call_openrouter(provider: LLMProvider, prompt: str, max_tokens: int, system: str | None = None) -> LLMResponse:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=provider.api_key, base_url="https://openrouter.ai/api/v1",
-                         default_headers={"HTTP-Referer": "https://tools.ecb.pm/intello",
+                         default_headers={"HTTP-Referer": os.environ.get("INTELLO_URL", "https://github.com/collaed/intello"),
                                           "X-Title": "AI Router"})
     resp = await client.chat.completions.create(
         model=provider.model_id, messages=_msgs(prompt, system), max_tokens=max_tokens,

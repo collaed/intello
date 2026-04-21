@@ -41,18 +41,24 @@ from intello import reconstruct as recon
 
 app = FastAPI(title="L'Intello")
 
-# Auth + user permissions
-USERS = {"eddy": "airouter2026", "ecb": "ecb2026"}
-TOKEN = os.environ.get("INTELLO_TOKEN", "ecb2026")
+# Auth — all credentials from environment variables
+import json as _json
+_users_raw = os.environ.get("INTELLO_USERS", '{"admin": "changeme"}')
+try:
+    USERS = _json.loads(_users_raw)
+except Exception:
+    USERS = {"admin": "changeme"}
+TOKEN = os.environ.get("INTELLO_TOKEN", "changeme")
+PREMIUM_USERS = set(os.environ.get("INTELLO_PREMIUM_USERS", "admin").split(","))
 
 # Models restricted to specific users (everyone else gets them filtered out)
 PREMIUM_MODELS = {
-    "gemini-2.5-pro",           # Google top model
-    "claude-sonnet-4-5",        # Claude top model
-    "gpt-4o",                   # OpenAI top model
-    "grok-4-1-fast",            # x.ai
+    "gemini-2.5-pro",
+    "claude-sonnet-4-5",
+    "gpt-4o",
+    "grok-4-1-fast",
 }
-PREMIUM_USERS = {"ecb"}  # Only these users can use premium models
+# PREMIUM_USERS is set above from env var
 
 
 def _get_user(request: Request) -> str:

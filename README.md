@@ -92,6 +92,19 @@ intello/
 - **29 LLM providers** (20 free, 41,850 free requests/day)
 - **36 automated tests** (whitebox + greybox + blackbox)
 
+## Why open source?
+
+L'Intello was built as a personal tool — a smart AI backend that routes prompts to the best free model, analyzes manuscripts, OCRs documents, and reconstructs scattered version files. It turned out to be useful enough to share.
+
+Most AI tools lock you into one provider, charge per word, or trap your data. L'Intello does the opposite:
+
+- **Bring your own keys** — use free tiers from 13 providers, pay nothing
+- **Self-hosted** — your data stays on your server
+- **No vendor lock-in** — swap providers by editing one file
+- **No subscription** — 48,000+ free requests/day across 26 free models
+
+It's not polished commercial software. It's a working tool built by a writer who got tired of paying $59/month for Sudowrite when free LLMs are this good.
+
 ## License
 
-Private project.
+MIT — do whatever you want with it.
