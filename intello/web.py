@@ -1937,7 +1937,8 @@ async def api_ocr_pdf(
     output: str = Form("json"),
     pages: str = Form(""),
 ):
-    """OCR a PDF — returns text or searchable PDF."""
+    """OCR a PDF. output: json|structured|text|hocr|searchable_pdf.
+    structured = paragraphs with bounding boxes + detected image regions per page."""
     import tempfile
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
         content = await file.read()
@@ -1954,7 +1955,8 @@ async def api_ocr_pdf(
                                 filename=f"ocr_{file.filename}")
         return {"error": "OCR failed"}
 
-    result = ocr.ocr_pdf_to_text(tmp, language, pages)
+    structured = output == "structured"
+    result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
     os.unlink(tmp)
 
     if output == "text":
