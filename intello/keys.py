@@ -132,6 +132,7 @@ _VALIDATORS = {
     "openai": _validate_openai,
     "anthropic": _validate_anthropic,
     "google": _validate_google,
+    "google_cloud": _validate_google,
     "groq": _validate_groq,
     "mistral": _validate_mistral,
     "deepseek": _validate_deepseek,

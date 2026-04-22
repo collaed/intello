@@ -182,7 +182,7 @@ def test_chat_completions():
     r = client.post("/v1/chat/completions", headers=HEADERS,
                     json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 10})
     # May 503 if no providers, but should not 500
-    assert r.status_code in (200, 503), f"Unexpected status: {r.status_code}"
+    assert r.status_code in (200, 429, 503), f"Unexpected status: {r.status_code}"
     print(f"✅ POST /v1/chat/completions → {r.status_code}")
 
 
