@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run all test suites: whitebox, greybox, blackbox."""
+"""Run all test suites: whitebox, greybox, blackbox, additional."""
 import subprocess, sys, os
 
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
 
 suites = [
     ("⬜ WHITE-BOX (unit tests)", "tests/test_all.py"),
+    ("⬜ WHITE-BOX ADDITIONAL", "tests/test_additional.py"),
     ("🔲 GREY-BOX (integration tests)", "tests/test_greybox.py"),
     ("⬛ BLACK-BOX (HTTP API tests)", "tests/test_blackbox.py"),
 ]
