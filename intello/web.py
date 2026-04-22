@@ -38,6 +38,7 @@ from intello import scheduler
 from intello import imagegen
 from intello import webhooks
 from intello import reconstruct as recon
+from intello import jobs as jobsys
 
 app = FastAPI(title="L'Intello")
 
@@ -791,8 +792,9 @@ async def api_tool_beta_read(text: str = Form(...)):
 
 
 @app.post("/api/literary/{doc_id}/analyze")
-async def api_literary_analyze(doc_id: str, focus: str = Form("full")):
-    """Run multi-model literary analysis on a document."""
+async def api_literary_analyze(doc_id: str, focus: str = Form("full"),
+                                async_mode: bool = Form(False)):
+    """Run multi-model literary analysis. Add async_mode=true for background processing."""
     info = literary.get_document_info(doc_id)
     if not info:
         return {"error": "Document not found"}
@@ -890,7 +892,27 @@ Do NOT write "a 500-word paragraph about X" — actually WRITE the 500 words.
 
 Be brutally honest. This writer wants to produce super literature, not hear compliments."""
 
-    # Run in deep mode for best quality
+    # Async mode — return job_id
+    if async_mode:
+        job_id = jobsys.create_job("literary_analyze", f"Analyze {info['title']}")
+
+        async def _run_analysis():
+            from intello.pipeline import run_deep as _rd
+            pipe = await _rd(analysis_prompt, _providers)
+            edits = 0
+            if pipe.final and not pipe.final.degraded:
+                for m in re.finditer(r'EDIT LINE[S]? (\d+)-(\d+):\s*(.+?)(?:\s*—\s*REASON:\s*(.+?))?(?:\n|$)', pipe.final.content):
+                    literary.propose_edit(doc_id, "replace", int(m.group(1)), int(m.group(2)),
+                                          m.group(3).strip(), m.group(4) or "", pipe.final.model_id)
+                    edits += 1
+            return {"analysis": pipe.final.content if pipe.final else "Failed",
+                    "edits_proposed": edits, "cost": pipe.total_cost}
+
+        asyncio.create_task(jobsys.run_async(job_id, _run_analysis()))
+        return {"job_id": job_id, "status": "queued",
+                "poll": f"/api/jobs/{job_id}", "result": f"/api/jobs/{job_id}/result"}
+
+    # Sync mode
     from intello.pipeline import run_deep
     pipe = await run_deep(analysis_prompt, _providers)
 
@@ -1241,6 +1263,7 @@ async def api_prompt(
     confirm_paid: bool = Form(False),
     mode: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
+    async_mode: bool = Form(False),
     request: Request = None,
 ):
     # User-based model filtering
@@ -1906,6 +1929,32 @@ async def start_scheduler():
     asyncio.create_task(_scheduler_loop())
 
 
+# --- Async Jobs ---
+
+@app.get("/api/jobs")
+async def api_jobs_list():
+    return jobsys.list_jobs()
+
+
+@app.get("/api/jobs/{job_id}")
+async def api_job_status(job_id: str):
+    job = jobsys.get_job(job_id)
+    if not job:
+        return {"error": "Job not found"}
+    return job
+
+
+@app.get("/api/jobs/{job_id}/result")
+async def api_job_result(job_id: str):
+    result = jobsys.get_job_result(job_id)
+    if result is None:
+        job = jobsys.get_job(job_id)
+        if not job:
+            return {"error": "Job not found"}
+        return {"error": f"Job status: {job['status']}"}
+    return result
+
+
 # --- OCR Service ---
 
 @app.post("/api/v1/ocr")
@@ -1940,9 +1989,10 @@ async def api_ocr_pdf(
     language: str = Form("eng"),
     output: str = Form("json"),
     pages: str = Form(""),
+    async_mode: bool = Form(False),
 ):
-    """OCR a PDF. output: json|structured|text|hocr|searchable_pdf.
-    structured = paragraphs with bounding boxes + detected image regions per page.
+    """OCR a PDF. Add async_mode=true for background processing (returns job_id).
+    output: json|structured|text|hocr|searchable_pdf.
     Auto-rotates and deskews pages. Max upload: 200MB."""
     import tempfile
     content = await file.read()
@@ -1953,6 +2003,25 @@ async def api_ocr_pdf(
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
         f.write(content)
         tmp = f.name
+
+    # Async mode — return job_id immediately
+    if async_mode:
+        job_id = jobsys.create_job("ocr_pdf", f"{file.filename} ({output})")
+
+        async def _run():
+            if output == "searchable_pdf":
+                out_path = tmp + "_ocr.pdf"
+                ok = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
+                os.unlink(tmp)
+                return {"ok": ok, "result_path": out_path if ok else None}
+            structured = output == "structured"
+            result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
+            os.unlink(tmp)
+            return result
+
+        asyncio.create_task(jobsys.run_async(job_id, _run()))
+        return {"job_id": job_id, "status": "queued",
+                "poll": f"/api/jobs/{job_id}", "result": f"/api/jobs/{job_id}/result"}
 
     if output == "searchable_pdf":
         out_path = tmp + "_ocr.pdf"
