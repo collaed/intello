@@ -25,19 +25,47 @@ def get_languages() -> list[str]:
         return ["eng"]
 
 
-def ocr_image(image_path: str, language: str = "eng", output: str = "json") -> dict:
-    """OCR a single image. output: json (structured), text (plain), hocr (HTML with positions)."""
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
+
+
+def _auto_rotate(image_path: str) -> str | None:
+    """Detect rotation using Tesseract OSD and correct if needed. Returns corrected path or None."""
     try:
+        r = subprocess.run(
+            ["tesseract", image_path, "stdout", "--psm", "0"],
+            capture_output=True, text=True, timeout=15)
+        for line in r.stdout.split("\n"):
+            if "Rotate:" in line:
+                angle = int(line.split(":")[-1].strip())
+                if angle and angle != 0:
+                    from PIL import Image
+                    img = Image.open(image_path)
+                    rotated = img.rotate(-angle, expand=True)
+                    out = image_path + "_rotated.png"
+                    rotated.save(out)
+                    return out
+    except Exception:
+        pass
+    return None
+
+
+def ocr_image(image_path: str, language: str = "eng", output: str = "json") -> dict:
+    """OCR a single image. Auto-detects and corrects rotation.
+    output: json (structured), text (plain), hocr (HTML with positions)."""
+    try:
+        # Auto-rotate using Tesseract's OSD (orientation/script detection)
+        corrected_path = _auto_rotate(image_path)
+        img_to_ocr = corrected_path or image_path
         # hOCR mode — returns HTML with embedded positions for every word
         if output == "hocr":
             r = subprocess.run(
-                ["tesseract", image_path, "stdout", "-l", language, "hocr"],
+                ["tesseract", img_to_ocr, "stdout", "-l", language, "hocr"],
                 capture_output=True, text=True, timeout=60)
             return {"hocr": r.stdout, "language": language}
 
         # Get plain text
         r = subprocess.run(
-            ["tesseract", image_path, "stdout", "-l", language],
+            ["tesseract", img_to_ocr, "stdout", "-l", language],
             capture_output=True, text=True, timeout=60)
         text = r.stdout.strip()
 
@@ -46,7 +74,7 @@ def ocr_image(image_path: str, language: str = "eng", output: str = "json") -> d
 
         # Get TSV for structured block-level data
         r2 = subprocess.run(
-            ["tesseract", image_path, "stdout", "-l", language, "tsv"],
+            ["tesseract", img_to_ocr, "stdout", "-l", language, "tsv"],
             capture_output=True, text=True, timeout=60)
 
         # Parse TSV into paragraphs → lines → words hierarchy
@@ -110,6 +138,10 @@ def ocr_image(image_path: str, language: str = "eng", output: str = "json") -> d
         return {"text": "", "confidence": 0, "language": language, "paragraphs": [], "error": "Timeout"}
     except Exception as e:
         return {"text": "", "confidence": 0, "language": language, "paragraphs": [], "error": str(e)}
+    finally:
+        # Clean up rotated temp file
+        if corrected_path and os.path.exists(corrected_path):
+            os.unlink(corrected_path)
 
 
 def ocr_pdf_to_text(pdf_path: str, language: str = "eng", pages: str = "",
@@ -195,14 +227,18 @@ def _detect_image_regions(paragraphs: list, page_w: int, page_h: int) -> list:
     return regions
 
 def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", pages: str = "") -> bool:
-    """Create a searchable PDF using OCRmyPDF."""
-    cmd = ["ocrmypdf", "-l", language, "--force-ocr", "--optimize", "1"]
+    """Create a searchable PDF using OCRmyPDF. Auto-rotates pages."""
+    cmd = ["ocrmypdf", "-l", language, "--force-ocr", "--optimize", "1",
+           "--rotate-pages",           # auto-detect and fix rotation
+           "--deskew",                 # fix slight skew
+           "--clean",                  # clean up scan artifacts
+           ]
     if pages:
         cmd.extend(["--pages", pages])
     cmd.extend([pdf_path, output_path])
 
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30min for large books
         return r.returncode == 0
     except Exception:
         return False

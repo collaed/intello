@@ -1913,12 +1913,16 @@ async def api_ocr_image(
     file: UploadFile = File(...),
     language: str = Form("eng"),
     output: str = Form("json"),
-    quality: str = Form("auto"),  # fast | auto | best
+    quality: str = Form("auto"),
 ):
-    """OCR a single image. quality=auto escalates engines on low confidence."""
+    """OCR a single image. Auto-rotates. Max upload: 200MB (configurable via MAX_UPLOAD_MB)."""
     import tempfile
+    content = await file.read()
+    max_bytes = ocr.MAX_UPLOAD_MB * 1024 * 1024
+    if len(content) > max_bytes:
+        return {"error": f"File too large: {len(content)//1024//1024}MB (max {ocr.MAX_UPLOAD_MB}MB)"}
+
     with tempfile.NamedTemporaryFile(suffix=f"_{file.filename}", delete=False) as f:
-        content = await file.read()
         f.write(content)
         tmp = f.name
 
@@ -1938,10 +1942,15 @@ async def api_ocr_pdf(
     pages: str = Form(""),
 ):
     """OCR a PDF. output: json|structured|text|hocr|searchable_pdf.
-    structured = paragraphs with bounding boxes + detected image regions per page."""
+    structured = paragraphs with bounding boxes + detected image regions per page.
+    Auto-rotates and deskews pages. Max upload: 200MB."""
     import tempfile
+    content = await file.read()
+    max_bytes = ocr.MAX_UPLOAD_MB * 1024 * 1024
+    if len(content) > max_bytes:
+        return {"error": f"File too large: {len(content)//1024//1024}MB (max {ocr.MAX_UPLOAD_MB}MB)"}
+
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-        content = await file.read()
         f.write(content)
         tmp = f.name
 
