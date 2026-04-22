@@ -1582,9 +1582,18 @@ from intello import costs
 async def api_voice_transcribe(
     file: UploadFile = File(...),
     language: str = Form(""),
+    async_mode: bool = Form(False),
 ):
-    """Speech-to-text via Groq Whisper. Free: 28,800 sec/day (~240 pages)."""
+    """Speech-to-text via Groq Whisper. Add async_mode=true for long audio files."""
     audio_bytes = await file.read()
+
+    if async_mode:
+        job_id = jobsys.create_job("stt", f"Transcribe {file.filename} ({len(audio_bytes)//1024}KB)")
+        asyncio.create_task(jobsys.run_async(job_id,
+            speech.transcribe_groq(audio_bytes, file.filename or "audio.wav", language)))
+        return {"job_id": job_id, "status": "queued",
+                "poll": f"/api/jobs/{job_id}", "result": f"/api/jobs/{job_id}/result"}
+
     return await speech.transcribe_groq(audio_bytes, file.filename or "audio.wav", language)
 
 
@@ -1595,27 +1604,66 @@ async def api_voice_synthesize(
     voice: str = Form(""),
     engine: str = Form("auto"),
     project_id: str = Form(""),
+    async_mode: bool = Form(False),
     request: Request = None,
 ):
-    """Text-to-speech. engine: auto|groq|voxtral|piper.
-    auto = Groq Orpheus (EN free), Voxtral (FR paid), Piper (fallback).
-    Voxtral costs $0.016/1K chars — checked against budget."""
+    """Text-to-speech. Add async_mode=true for long texts (returns job_id).
+    engine: auto|groq|voxtral|piper.
+    auto = Groq Orpheus (EN free), Voxtral (FR paid), Piper (fallback)."""
 
     user = _get_user(request) if request else "anonymous"
 
-    # Auto engine selection
     if engine == "auto":
-        if language.startswith("fr"):
-            engine = "voxtral"  # best French quality
-        else:
-            engine = "groq"     # best English, free
+        engine = "voxtral" if language.startswith("fr") else "groq"
 
-    # Voxtral (paid) — check budget first
+    # Async mode — run in background, store audio in job result
+    if async_mode:
+        job_id = jobsys.create_job("tts", f"TTS {language} {len(text)} chars ({engine})")
+
+        async def _run_tts():
+            eng = engine
+            audio = None
+            used_engine = eng
+
+            if eng == "voxtral":
+                est = costs.estimate_tts_cost(text, "voxtral")
+                if costs.check_budget(est, "global")["allowed"]:
+                    audio = await speech.synthesize_voxtral(text, voice)
+                    if audio:
+                        costs.record_cost("tts", "voxtral", len(text), "characters",
+                                          est, f"TTS async {language}", project_id, user)
+                if not audio:
+                    eng = "piper"
+
+            if eng == "groq":
+                audio = await speech.synthesize_groq(text, voice or "tara")
+                used_engine = "groq"
+                if not audio:
+                    eng = "piper"
+
+            if eng == "piper" and speech.tts_available():
+                audio = speech.synthesize(text, language)
+                used_engine = "piper"
+
+            if audio:
+                # Save to temp file for retrieval
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False,
+                                                  dir="/data") as f:
+                    f.write(audio)
+                    return {"audio_path": f.name, "engine": used_engine,
+                            "size_bytes": len(audio), "language": language}
+            return {"error": "TTS failed"}
+
+        asyncio.create_task(jobsys.run_async(job_id, _run_tts()))
+        return {"job_id": job_id, "status": "queued",
+                "poll": f"/api/jobs/{job_id}", "result": f"/api/jobs/{job_id}/result"}
+
+    # Sync mode
     if engine == "voxtral":
         est_cost = costs.estimate_tts_cost(text, "voxtral")
         budget_check = costs.check_budget(est_cost, "global")
         if not budget_check["allowed"]:
-            # Fall back to Piper instead of refusing
             engine = "piper"
         else:
             audio = await speech.synthesize_voxtral(text, voice)
@@ -1626,9 +1674,8 @@ async def api_voice_synthesize(
                 return Response(audio, media_type="audio/wav",
                                 headers={"Content-Disposition": "attachment; filename=speech_voxtral.wav",
                                          "X-Cost-USD": str(round(est_cost, 6))})
-            engine = "piper"  # fallback
+            engine = "piper"
 
-    # Groq Orpheus (free, EN only)
     if engine == "groq":
         audio = await speech.synthesize_groq(text, voice or "tara")
         if audio:
@@ -1636,7 +1683,6 @@ async def api_voice_synthesize(
                             headers={"Content-Disposition": "attachment; filename=speech_groq.wav"})
         engine = "piper"
 
-    # Piper (free, local, EN+FR)
     if engine == "piper":
         if not speech.tts_available():
             return {"error": "Piper TTS not installed"}
@@ -1952,6 +1998,14 @@ async def api_job_result(job_id: str):
         if not job:
             return {"error": "Job not found"}
         return {"error": f"Job status: {job['status']}"}
+    # If result contains an audio file path, serve it
+    if isinstance(result, dict) and result.get("audio_path"):
+        path = result["audio_path"]
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                audio = f.read()
+            return Response(audio, media_type="audio/wav",
+                            headers={"Content-Disposition": "attachment; filename=speech.wav"})
     return result
 
 
