@@ -10,7 +10,7 @@ SYSTEM_DEFAULT = (
 )
 
 
-def _msgs(prompt: str, system: str | None = None):
+def _msgs(prompt: str, system: str | None = None) -> list[dict]:
     s = system or SYSTEM_DEFAULT
     return [{"role": "system", "content": s}, {"role": "user", "content": prompt}]
 

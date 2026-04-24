@@ -56,7 +56,7 @@ def _db():
         conn.close()
 
 
-def _init():
+def _init() -> None:
     with _db() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS cache (
             prompt_hash TEXT PRIMARY KEY,

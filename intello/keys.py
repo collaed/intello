@@ -1,4 +1,6 @@
-"""API key discovery and validation module."""
+"""API key discovery, validation, and encrypted persistence."""
+import base64
+import hashlib
 import json
 import os
 import asyncio
@@ -9,10 +11,33 @@ import httpx
 from .models import LLMProvider
 
 KEYS_FILE = os.environ.get("KEYS_FILE", "/data/api_keys.json")
+KEYS_FILE_ENC = os.environ.get("KEYS_FILE_ENC", "/data/api_keys.enc")
+
+
+def _get_cipher():
+    """Get Fernet cipher from INTELLO_TOKEN. Returns None if cryptography not installed."""
+    try:
+        from cryptography.fernet import Fernet
+        token = os.environ.get("INTELLO_TOKEN", "ecb2026")
+        # Derive a 32-byte key from the token
+        key = base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest())
+        return Fernet(key)
+    except ImportError:
+        return None
 
 
 def _load_saved_keys() -> dict[str, str]:
-    """Load persisted keys from disk."""
+    """Load persisted keys — tries encrypted file first, falls back to plain JSON."""
+    # Try encrypted
+    cipher = _get_cipher()
+    if cipher and os.path.exists(KEYS_FILE_ENC):
+        try:
+            with open(KEYS_FILE_ENC, "rb") as f:
+                decrypted = cipher.decrypt(f.read())
+            return json.loads(decrypted)
+        except Exception:
+            pass
+    # Fall back to plain JSON (migrate on next save)
     if os.path.exists(KEYS_FILE):
         try:
             with open(KEYS_FILE) as f:
@@ -23,10 +48,19 @@ def _load_saved_keys() -> dict[str, str]:
 
 
 def _save_keys(keys: dict[str, str]) -> None:
-    """Persist keys to disk."""
+    """Persist keys — encrypted if cryptography available, plain JSON as fallback."""
     os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
-    with open(KEYS_FILE, "w") as f:
-        json.dump(keys, f)
+    cipher = _get_cipher()
+    if cipher:
+        encrypted = cipher.encrypt(json.dumps(keys).encode())
+        with open(KEYS_FILE_ENC, "wb") as f:
+            f.write(encrypted)
+        # Remove plain file if it exists (migration)
+        if os.path.exists(KEYS_FILE):
+            os.unlink(KEYS_FILE)
+    else:
+        with open(KEYS_FILE, "w") as f:
+            json.dump(keys, f)
 
 
 def discover_keys(providers: list[LLMProvider]) -> list[LLMProvider]:

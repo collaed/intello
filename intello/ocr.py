@@ -639,7 +639,7 @@ def _jobdb():
         conn.close()
 
 
-def _init_jobdb():
+def _init_jobdb() -> None:
     with _jobdb() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS ocr_jobs (
             job_id TEXT PRIMARY KEY,
@@ -682,7 +682,7 @@ def create_job(file_path: str, language: str, output: str, pages: str = "") -> s
     return job_id
 
 
-def _update_job(job_id: str, **kwargs):
+def _update_job(job_id: str, **kwargs) -> None:
     if not kwargs:
         return
     kwargs["updated_at"] = time.time()

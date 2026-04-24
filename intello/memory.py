@@ -22,7 +22,7 @@ def _db():
         conn.close()
 
 
-def init_db():
+def init_db() -> None:
     with _db() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -77,7 +77,7 @@ def create_conversation(conv_id: str, user_id: str = "default") -> str:
     return conv_id
 
 
-def add_message(conv_id: str, role: str, content: str, model: str = "", cost: float = 0):
+def add_message(conv_id: str, role: str, content: str, model: str = "", cost: float = 0) -> None:
     with _db() as conn:
         conn.execute("INSERT INTO messages (conversation_id, role, content, model, cost, ts) VALUES (?,?,?,?,?,?)",
                      (conv_id, role, content, model, cost, time.time()))
@@ -98,7 +98,7 @@ def get_summary(conv_id: str) -> str:
     return row["summary"] if row else ""
 
 
-def set_summary(conv_id: str, summary: str):
+def set_summary(conv_id: str, summary: str) -> None:
     with _db() as conn:
         conn.execute("UPDATE conversations SET summary=?, updated_at=? WHERE id=?",
                      (summary, time.time(), conv_id))
@@ -147,7 +147,7 @@ def get_prefs(user_id: str = "default") -> dict:
     return d
 
 
-def set_prefs(user_id: str = "default", **kwargs):
+def set_prefs(user_id: str = "default", **kwargs) -> None:
     current = get_prefs(user_id)
     current.update(kwargs)
     if isinstance(current.get("preferred_models"), list):
@@ -163,7 +163,7 @@ def set_prefs(user_id: str = "default", **kwargs):
 
 # --- Cross-Session Learning ---
 
-def record_model_result(model_id: str, task_type: str, success: bool, latency: float = 0, rating: float = 0):
+def record_model_result(model_id: str, task_type: str, success: bool, latency: float = 0, rating: float = 0) -> None:
     """Record a model's performance for learning."""
     with _db() as conn:
         row = conn.execute("SELECT * FROM model_scores WHERE model_id=? AND task_type=?",
