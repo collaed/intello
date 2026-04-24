@@ -225,22 +225,26 @@ def _detect_image_regions(paragraphs: list, page_w: int, page_h: int) -> list:
 
     return regions
 
-def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", pages: str = "") -> bool:
-    """Create a searchable PDF using OCRmyPDF. Auto-rotates pages."""
+def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", pages: str = "") -> dict:
+    """Create a searchable PDF using OCRmyPDF. Returns {ok, error}."""
     cmd = ["ocrmypdf", "-l", language, "--force-ocr", "--optimize", "1",
-           "--rotate-pages",           # auto-detect and fix rotation
-           "--deskew",                 # fix slight skew
-           "--clean",                  # clean up scan artifacts
+           "--rotate-pages",
+           "--deskew",
+           "--clean",
            ]
     if pages:
         cmd.extend(["--pages", pages])
     cmd.extend([pdf_path, output_path])
 
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30min for large books
-        return r.returncode == 0
-    except Exception:
-        return False
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if r.returncode == 0:
+            return {"ok": True}
+        return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-500:]}" if r.stderr else f"exit {r.returncode}"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "Timeout (>30 min)"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 # --- Async job management (SQLite-persisted) ---
@@ -323,12 +327,12 @@ async def run_job(job_id: str):
         if job["output"] == "searchable_pdf":
             out_path = str(JOBS_DIR / f"{job_id}.pdf")
             loop = asyncio.get_event_loop()
-            ok = await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 None, ocr_pdf_searchable, job["file_path"], out_path, job["language"], job["pages"])
-            if ok:
+            if result["ok"]:
                 _update_job(job_id, status="complete", result_path=out_path, progress=100)
             else:
-                _update_job(job_id, status="failed", error="OCRmyPDF failed")
+                _update_job(job_id, status="failed", error=result.get("error", "OCRmyPDF failed"))
         else:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(

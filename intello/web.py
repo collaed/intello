@@ -2069,9 +2069,11 @@ async def api_ocr_pdf(
         async def _run():
             if output == "searchable_pdf":
                 out_path = tmp + "_ocr.pdf"
-                ok = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
+                result = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
                 os.unlink(tmp)
-                return {"ok": ok, "result_path": out_path if ok else None}
+                if result["ok"]:
+                    return {"ok": True, "result_path": out_path}
+                return {"ok": False, "error": result.get("error", "OCR failed")}
             structured = output == "structured"
             result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
             os.unlink(tmp)
@@ -2083,13 +2085,13 @@ async def api_ocr_pdf(
 
     if output == "searchable_pdf":
         out_path = tmp + "_ocr.pdf"
-        ok = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
+        result = ocr.ocr_pdf_searchable(tmp, out_path, language, pages)
         os.unlink(tmp)
-        if ok:
+        if result["ok"]:
             from fastapi.responses import FileResponse
             return FileResponse(out_path, media_type="application/pdf",
                                 filename=f"ocr_{file.filename}")
-        return {"error": "OCR failed"}
+        return {"error": result.get("error", "OCR failed")}
 
     structured = output == "structured"
     result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
