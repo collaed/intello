@@ -9,6 +9,7 @@ from typing import Optional
 import httpx
 
 from .models import LLMProvider
+from intello.log import log
 
 KEYS_FILE = os.environ.get("KEYS_FILE", "/data/api_keys.json")
 KEYS_FILE_ENC = os.environ.get("KEYS_FILE_ENC", "/data/api_keys.enc")
@@ -36,14 +37,14 @@ def _load_saved_keys() -> dict[str, str]:
                 decrypted = cipher.decrypt(f.read())
             return json.loads(decrypted)
         except Exception:
-            pass
+            log.warning("Suppressed exception", exc_info=True)
     # Fall back to plain JSON (migrate on next save)
     if os.path.exists(KEYS_FILE):
         try:
             with open(KEYS_FILE) as f:
                 return json.load(f)
         except Exception:
-            pass
+            log.warning("Suppressed exception", exc_info=True)
     return {}
 
 

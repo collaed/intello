@@ -89,7 +89,7 @@ def _get_user(request: Request) -> str:
             decoded = base64.b64decode(auth[6:]).decode()
             return decoded.split(":", 1)[0]
         except Exception:
-            pass
+            log.warning("Suppressed exception", exc_info=True)
     # Docker internal = admin
     client_ip = request.client.host if request.client else ""
     if client_ip.startswith("172.") or client_ip == "127.0.0.1":
@@ -144,6 +144,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(AuthMiddleware)
+
+# CORS — restrict to same-origin only (no cross-site cookie attacks)
+from starlette.middleware.cors import CORSMiddleware
+from intello.log import log
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ.get("INTELLO_ORIGIN", "")],  # empty = same-origin only
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.post("/login")
@@ -753,7 +764,7 @@ async def _scheduler_loop():
                     scheduler.record_result(task["task_id"],
                                             result.content if not result.degraded else "Failed")
         except Exception:
-            pass
+            log.warning("Suppressed exception", exc_info=True)
 
 
 @app.on_event("startup")
@@ -884,7 +895,7 @@ async def _stream_response(user_msg, system_msg, max_tokens, plan, providers):
                 yield "data: [DONE]\n\n"
                 return
         except Exception:
-            pass
+            log.warning("Suppressed exception", exc_info=True)
         # Fallback: non-streaming, send all at once
         result = await execute(provider, user_msg, max_tokens=max_tokens, system=system_msg)
         yield f"data: {json.dumps({'choices': [{'delta': {'content': result.content}, 'index': 0}]})}\n\n"

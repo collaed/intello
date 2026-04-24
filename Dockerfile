@@ -12,9 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unpaper \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Kokoro TTS (82M, CPU, high quality English)
-RUN pip install --no-cache-dir kokoro>=0.3 soundfile
-
 # Install Piper TTS
 RUN mkdir -p /opt/piper && \
     wget -qO- https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz | tar xz -C /opt/piper --strip-components=1 && \
@@ -33,5 +30,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m spacy download en_core_web_sm
 COPY . .
+
+# Run as non-root user
+RUN useradd -m -u 1000 intello && \
+    mkdir -p /data && chown intello:intello /data && \
+    chown -R intello:intello /opt/piper
+USER intello
+
 EXPOSE 8000
 CMD ["uvicorn", "intello.web:app", "--host", "0.0.0.0", "--port", "8000"]

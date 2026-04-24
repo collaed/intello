@@ -3,12 +3,12 @@ import functools
 import hashlib
 import json
 import os
-import pickle
 import sqlite3
 import time
 from contextlib import contextmanager
 
 import numpy as np
+from intello.log import log
 
 DB_PATH = os.environ.get("CACHE_DB", "/data/cache.db")
 
@@ -35,12 +35,12 @@ def _embed(text: str) -> bytes | None:
     if emb is None:
         return None
     vec = emb.encode(text, normalize_embeddings=True)
-    return pickle.dumps(vec)
+    return vec.astype(np.float32).tobytes()
 
 
 def _cosine_sim(a: bytes, b: bytes) -> float:
-    va = pickle.loads(a)
-    vb = pickle.loads(b)
+    va = np.frombuffer(a, dtype=np.float32)
+    vb = np.frombuffer(b, dtype=np.float32)
     return float(np.dot(va, vb))
 
 

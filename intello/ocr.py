@@ -623,6 +623,7 @@ def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng",
 
 import sqlite3
 from contextlib import contextmanager
+from intello.log import log
 
 _JOBS_DB = os.environ.get("OCR_JOBS_DB", "/data/ocr_jobs.db")
 
