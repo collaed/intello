@@ -296,7 +296,6 @@ async def run_job(job_id: str):
             job["status"] = "complete"
             job["progress"] = 100
             job["pages_done"] = result["processed_pages"]
-            # Store result as JSON
             out_path = str(JOBS_DIR / f"{job_id}.json")
             with open(out_path, "w") as f:
                 json.dump(result, f)
@@ -304,3 +303,27 @@ async def run_job(job_id: str):
     except Exception as e:
         job["status"] = "failed"
         job["error"] = str(e)
+    finally:
+        # Clean up the uploaded source file
+        src = job.get("file_path", "")
+        if src and os.path.exists(src) and src != job.get("result_path"):
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+
+
+def cleanup_old_files(max_age_hours: int = 24):
+    """Remove temp files older than max_age_hours from the jobs directory."""
+    cutoff = time.time() - (max_age_hours * 3600)
+    if not JOBS_DIR.exists():
+        return 0
+    removed = 0
+    for f in JOBS_DIR.iterdir():
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
