@@ -390,9 +390,8 @@ def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng",
            "--optimize", str(optimize),
            "--rotate-pages",
            "--deskew",
-           "--clean",
-           "--jbig2-lossy" if optimize >= 2 else "--jbig2-threshold", "0.85",
            ]
+    # Skip --clean (unpaper) — it uses too much RAM on large PDFs
     if pages:
         cmd.extend(["--pages", pages])
     cmd.extend([pdf_path, output_path])

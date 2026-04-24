@@ -11,6 +11,10 @@ services:
       - .env
     volumes:
       - intello-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 3G
 
 volumes:
   intello-data:
