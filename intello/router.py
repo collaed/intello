@@ -51,29 +51,94 @@ def classify_task(prompt: str) -> TaskType:
     return TaskType.GENERAL
 
 
-def _score(provider: LLMProvider, task: TaskType, tokens: int) -> float:
-    """Score a provider for a given task (higher = better)."""
+def _score(provider: LLMProvider, task: TaskType, tokens: int,
+           interactive: bool = True) -> float:
+    """Score a provider for a given task (higher = better).
+    interactive=False means background/batch work — prefer Cloudflare, save Groq."""
     score = 0.0
+
+    # Task-strength match
     if task in provider.strengths:
         score += 50
+
+    # Free tier bonus
     if provider.tier == Tier.FREE:
         score += 30
-    if tokens < provider.context_window:
-        score += 20
+
+    # Context window — HARD EXCLUDE if tokens don't fit
+    if tokens >= provider.context_window:
+        return -9999
+    score += 20
+
     # Penalize cost
     est_cost = (tokens / 1000) * provider.cost_per_1k_input + (tokens / 1000) * provider.cost_per_1k_output
     score -= est_cost * 100
 
-    # Rate limit awareness: penalize providers running low on quota
+    # --- Interactive vs Background routing ---
+    if interactive:
+        # Interactive: reward speed (Groq), penalize slow (Cloudflare)
+        if provider.provider == "groq":
+            score += 25  # fastest inference
+        elif provider.provider == "cloudflare":
+            score -= 15  # cold starts, slower
+    else:
+        # Background: reward Cloudflare (huge quota), penalize Groq (save for interactive)
+        if provider.provider == "cloudflare":
+            score += 30  # 10K/day per model, use it
+        elif provider.provider == "groq":
+            score -= 20  # save for interactive
+
+    # --- Task-specific provider preferences ---
+    # Vision: only Gemini
+    if task == TaskType.VISION and provider.provider != "google":
+        score -= 100
+
+    # Long context: Gemini (1M) >> Cohere (128K) >> others
+    if task == TaskType.LONG_CONTEXT:
+        if provider.provider == "google":
+            score += 30
+        elif provider.provider == "cohere":
+            score += 15
+        elif provider.provider == "cloudflare":
+            score -= 50  # 4-8K context, useless for long
+
+    # Code: DeepSeek V3 for generation, R1 for debugging
+    if task == TaskType.CODE:
+        if "deepseek-chat" in provider.model_id:
+            score += 15  # V3 for generation
+        elif "qwen2.5-coder" in provider.model_id:
+            score += 10
+        elif "deepseek-r1" in provider.model_id:
+            score += 8   # R1 for reasoning about code
+
+    # Math: DeepSeek + Gemini Pro
+    if task == TaskType.MATH:
+        if "deepseek" in provider.model_id:
+            score += 15
+        elif "gemini-2.5" in provider.model_id:
+            score += 12
+
+    # Analysis/RAG: Cohere excels at grounding
+    if task == TaskType.ANALYSIS:
+        if provider.provider == "cohere":
+            score += 20
+        elif "gemini-2.5" in provider.model_id:
+            score += 10
+
+    # --- Cloudflare context window guard ---
+    if provider.provider == "cloudflare" and tokens > 6000:
+        score -= 200  # CF models often limited to 4-8K
+
+    # Rate limit awareness
     rem = ratelimit.remaining(provider.model_id, provider.daily_limit)
     if rem == 0:
-        score -= 1000  # exhausted — effectively skip
-    elif rem != -1:  # has a limit
+        score -= 1000
+    elif rem != -1:
         pct_left = rem / provider.daily_limit
         if pct_left < 0.1:
-            score -= 40   # <10% left — strongly avoid
+            score -= 40
         elif pct_left < 0.3:
-            score -= 15   # <30% left — mild penalty
+            score -= 15
 
     # Cross-session learning bonus/penalty
     score += memory.get_score_bonus(provider.model_id, task.value)
@@ -81,8 +146,10 @@ def _score(provider: LLMProvider, task: TaskType, tokens: int) -> float:
     return score
 
 
-def build_plan(prompt: str, providers: list[LLMProvider], prefer_free: bool = True) -> RoutingPlan:
-    """Build a routing plan for the given prompt."""
+def build_plan(prompt: str, providers: list[LLMProvider], prefer_free: bool = True,
+               interactive: bool = True) -> RoutingPlan:
+    """Build a routing plan for the given prompt.
+    interactive=False for background tasks (prefers Cloudflare, saves Groq)."""
     task = classify_task(prompt)
     tokens = estimate_tokens(prompt)
 
@@ -94,7 +161,7 @@ def build_plan(prompt: str, providers: list[LLMProvider], prefer_free: bool = Tr
 
     # Score and rank
     candidates = free_available if (prefer_free and free_available) else available
-    ranked = sorted(candidates, key=lambda p: _score(p, task, tokens), reverse=True)
+    ranked = sorted(candidates, key=lambda p: _score(p, task, tokens, interactive), reverse=True)
 
     primary = ranked[0] if ranked else None
     fallbacks = ranked[1:4] if len(ranked) > 1 else []
@@ -102,7 +169,7 @@ def build_plan(prompt: str, providers: list[LLMProvider], prefer_free: bool = Tr
     # If no free options, check paid
     degraded = False
     if not primary and paid_available:
-        ranked_paid = sorted(paid_available, key=lambda p: _score(p, task, tokens), reverse=True)
+        ranked_paid = sorted(paid_available, key=lambda p: _score(p, task, tokens, interactive), reverse=True)
         primary = ranked_paid[0]
         fallbacks = ranked_paid[1:3]
     elif not primary:
@@ -120,7 +187,7 @@ def build_plan(prompt: str, providers: list[LLMProvider], prefer_free: bool = Tr
     reasoning_parts.append(f"Estimated input tokens: ~{tokens}")
     reasoning_parts.append(f"Available providers: {len(available)} ({len(free_available)} free, {len(paid_available)} paid)")
     if primary:
-        reasoning_parts.append(f"Selected: {primary.name} (score: {_score(primary, task, tokens):.1f})")
+        reasoning_parts.append(f"Selected: {primary.name} (score: {_score(primary, task, tokens, interactive):.1f})")
         rem = ratelimit.remaining(primary.model_id, primary.daily_limit)
         if rem != -1:
             reasoning_parts.append(f"Quota: {rem}/{primary.daily_limit} requests remaining today")

@@ -1247,9 +1247,9 @@ async def _compress_context(conv_id: str):
         "Be factual and dense.\n\n" + "\n".join(text_parts)
     )
 
-    # Pick cheapest available model for compression
+    # Pick cheapest available model — prefer Cloudflare (background task, save Groq)
     for p in _providers:
-        if p.available and p.provider in ("groq", "cloudflare", "mistral"):
+        if p.available and p.provider in ("cloudflare", "mistral", "groq"):
             result = await execute(p, compress_prompt, max_tokens=500,
                                    system="You are a conversation summarizer. Be concise and factual.")
             if not result.degraded:
@@ -1558,7 +1558,7 @@ async def api_scheduler_run_due():
     due = scheduler.get_due_tasks()
     results = []
     for task in due:
-        plan = build_plan(task["prompt"], _providers)
+        plan = build_plan(task["prompt"], _providers, interactive=False)
         if plan.primary:
             result = await execute(plan.primary, task["prompt"], max_tokens=2000)
             scheduler.record_result(task["task_id"], result.content if not result.degraded else "Failed")
@@ -1637,11 +1637,17 @@ async def api_voice_synthesize(
                         costs.record_cost("tts", "voxtral", len(text), "characters",
                                           est, f"TTS async {language}", project_id, user)
                 if not audio:
-                    eng = "piper"
+                    eng = "groq"
 
             if eng == "groq":
                 audio = await speech.synthesize_groq(text, voice or "tara")
                 used_engine = "groq"
+                if not audio:
+                    eng = "kokoro"
+
+            if eng == "kokoro":
+                audio = speech.synthesize_kokoro(text)
+                used_engine = "kokoro"
                 if not audio:
                     eng = "piper"
 
@@ -1650,7 +1656,6 @@ async def api_voice_synthesize(
                 used_engine = "piper"
 
             if audio:
-                # Save to temp file for retrieval
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False,
                                                   dir="/data") as f:
@@ -1668,7 +1673,7 @@ async def api_voice_synthesize(
         est_cost = costs.estimate_tts_cost(text, "voxtral")
         budget_check = costs.check_budget(est_cost, "global")
         if not budget_check["allowed"]:
-            engine = "piper"
+            engine = "groq"
         else:
             audio = await speech.synthesize_voxtral(text, voice)
             if audio:
@@ -1678,13 +1683,20 @@ async def api_voice_synthesize(
                 return Response(audio, media_type="audio/wav",
                                 headers={"Content-Disposition": "attachment; filename=speech_voxtral.wav",
                                          "X-Cost-USD": str(round(est_cost, 6))})
-            engine = "piper"
+            engine = "groq"
 
     if engine == "groq":
         audio = await speech.synthesize_groq(text, voice or "tara")
         if audio:
             return Response(audio, media_type="audio/wav",
                             headers={"Content-Disposition": "attachment; filename=speech_groq.wav"})
+        engine = "kokoro"
+
+    if engine == "kokoro":
+        audio = speech.synthesize_kokoro(text)
+        if audio:
+            return Response(audio, media_type="audio/wav",
+                            headers={"Content-Disposition": "attachment; filename=speech_kokoro.wav"})
         engine = "piper"
 
     if engine == "piper":
@@ -1823,7 +1835,7 @@ async def api_webhook_trigger(hook_id: str, request: Request):
     if not prompt:
         return {"error": "No prompt in payload or webhook config"}
 
-    plan = build_plan(prompt, _providers)
+    plan = build_plan(prompt, _providers, interactive=False)
     if not plan.primary:
         return {"error": "No providers"}
 
@@ -1893,7 +1905,7 @@ DOCUMENT:
 
 List issues and fixes:"""
 
-    plan = build_plan(prompt, _providers)
+    plan = build_plan(prompt, _providers, interactive=False)
     if not plan.primary:
         return {"error": "No providers"}
     result = await execute(plan.primary, prompt, max_tokens=4000)
@@ -1965,7 +1977,7 @@ async def _scheduler_loop():
         try:
             due = scheduler.get_due_tasks()
             for task in due:
-                plan = build_plan(task["prompt"], _providers)
+                plan = build_plan(task["prompt"], _providers, interactive=False)
                 if plan.primary:
                     result = await execute(plan.primary, task["prompt"], max_tokens=2000)
                     scheduler.record_result(task["task_id"],

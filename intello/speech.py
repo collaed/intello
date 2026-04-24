@@ -62,6 +62,32 @@ def synthesize(text: str, language: str = "en", output_format: str = "wav") -> b
 GROQ_VOICES = ["tara", "leah", "jess", "leo", "dan", "mara", "troy", "austin", "hannah"]
 
 
+def synthesize_kokoro(text: str) -> bytes | None:
+    """TTS via Kokoro — 82M params, CPU, high quality English. Apache 2.0."""
+    try:
+        from kokoro import KPipeline
+        import soundfile as sf
+        import io
+        import numpy as np
+
+        pipe = KPipeline(lang_code="a")  # 'a' = American English
+        audio_segments = []
+        for _, _, audio in pipe(text[:10000]):
+            audio_segments.append(audio)
+
+        if not audio_segments:
+            return None
+
+        full_audio = np.concatenate(audio_segments)
+        buf = io.BytesIO()
+        sf.write(buf, full_audio, 24000, format="WAV")
+        return buf.getvalue()
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
 async def synthesize_groq(text: str, voice: str = "tara") -> bytes | None:
     """Convert text to speech using Groq Orpheus (cloud, high quality, expressive).
     Supports vocal directions: [cheerful] [sad] [whisper] [laughing] [surprised]
