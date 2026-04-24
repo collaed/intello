@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libgl1 \
     wget \
+    unpaper \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Piper TTS
