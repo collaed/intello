@@ -419,7 +419,7 @@ async def api_literary_edits(doc_id: str):
     return literary.get_pending_edits(doc_id)
 
 
-# --- Writing Tools (Sudowrite-style) ---
+# --- Writing Tools (AI-powered) ---
 
 @router.post("/api/tools/transform")
 async def api_tool_transform(

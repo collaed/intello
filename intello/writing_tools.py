@@ -1,4 +1,4 @@
-"""Writing tools — Sudowrite-style text transformations powered by multi-LLM routing."""
+"""Writing tools — AI-powered text transformations powered by multi-LLM routing."""
 
 
 def show_not_tell(text: str, context: str = "") -> str:

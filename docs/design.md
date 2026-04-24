@@ -6,7 +6,7 @@
 graph TB
     subgraph "Client Layer"
         Browser["Browser (4 HTML pages)"]
-        ABS["Audiobookshelf"]
+        ExtClient["External Clients"]
         ExtAPI["External API Clients"]
     end
 
@@ -63,7 +63,7 @@ graph TB
     end
 
     Browser --> Caddy --> Auth --> Web
-    ABS --> Auth
+    ExtClient --> Auth
     ExtAPI --> Auth
     Web --> Router --> Backends --> LLMs
     Web --> Pipeline --> Backends
@@ -392,12 +392,12 @@ sequenceDiagram
     AM->>App: Authenticated
     App-->>B: Provider list
 
-    Note over B,App: Path 2: Docker internal (ABS)
-    participant ABS as Audiobookshelf
-    ABS->>AM: GET /api/v1/status (from 172.19.x.x)
+    Note over B,App: Path 2: Docker internal (API client)
+    participant ExtClient as External Client
+    ExtClient->>AM: GET /api/v1/status (from 172.19.x.x)
     AM->>AM: IP starts with 172. → trust
     AM->>App: Authenticated (no auth needed)
-    App-->>ABS: Status response
+    App-->>external client: Status response
 
     Note over B,App: Path 3: API client with Bearer
     participant API as API Client
@@ -442,7 +442,7 @@ sequenceDiagram
 | **Static HTML** | | | | |
 | `static/index.html` | UI | ~310 | — | Chat UI (ChatGPT-style sidebar + chat) |
 | `static/literary.html` | UI | ~700 | — | Literary analysis (structure, pacing, threads, tools) |
-| `static/corkboard.html` | UI | ~130 | — | Scrivener-style scene cards |
+| `static/corkboard.html` | UI | ~130 | — | Visual scene cards |
 | `static/gdrive.html` | UI | ~230 | — | Google Drive file browser |
 
 ## 9. Database Schemas

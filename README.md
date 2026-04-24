@@ -34,7 +34,7 @@ Tesseract → OCR.space → Gemini Vision auto-escalation. Single images, PDFs, 
 Upload 50+ scattered version files → detect cross-references → rebuild complete document → LLM-smooth transitions.
 
 ### 🔌 OpenAI-Compatible API
-Drop-in replacement at `/v1/chat/completions`. Works with any OpenAI SDK client, Ollama, audiobookshelf.
+Drop-in replacement at `/v1/chat/completions`. Works with any OpenAI SDK client, Ollama, external clients.
 
 ## Documentation
 
@@ -59,7 +59,7 @@ intello/
 ├── chains.py           Prompt chaining / task decomposition
 ├── literary.py         Document ingestion, structure, pacing, edits
 ├── workflow.py         Writing workflow engine
-├── writing_tools.py    Sudowrite-style transformations
+├── writing_tools.py    AI writing transformations
 ├── craft.py            Dynamic literary reference engine
 ├── reconstruct.py      Version reconstruction from scattered files
 ├── nlp.py              spaCy NER + linguistic analysis
@@ -80,7 +80,7 @@ intello/
 └── static/
     ├── index.html      Chat UI (ChatGPT-style)
     ├── literary.html   Literary analysis page
-    ├── corkboard.html  Scrivener-style scene board
+    ├── corkboard.html  Visual scene board
     └── gdrive.html     Google Drive file browser
 ```
 
@@ -103,7 +103,7 @@ Most AI tools lock you into one provider, charge per word, or trap your data. L'
 - **No vendor lock-in** — swap providers by editing one file
 - **No subscription** — 48,000+ free requests/day across 26 free models
 
-It's not polished commercial software. It's a working tool built by a writer who got tired of paying $59/month for Sudowrite when free LLMs are this good.
+It's not polished commercial software. It's a working tool built by a writer who got tired of paying $59/month for commercial AI writing tools when free LLMs are this good.
 
 ## License
 

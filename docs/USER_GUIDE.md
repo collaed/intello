@@ -210,7 +210,7 @@ GET /api/v1/ocr/jobs/{id}/result  → download result
 
 **URL**: `/corkboard`
 
-Scrivener-style visual board for organizing scenes.
+Visual visual board for organizing scenes.
 
 - Select a document from the dropdown
 - Chapters appear as index cards

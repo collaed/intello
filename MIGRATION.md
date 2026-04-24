@@ -61,7 +61,7 @@ GET /api/v1/status
 }
 ```
 
-## For API clients (Audiobookshelf, etc.)
+## For API clients (External clients, etc.)
 
 Update your configuration:
 
@@ -107,4 +107,4 @@ docker compose down
 
 ## Why the rename?
 
-"AI Router" described what it did in March 2026 — route prompts to LLMs. Since then it grew into a literary analysis engine, writing toolkit, OCR service, and audiobookshelf backend. "L'Intello" (French slang for "the brainy one") better reflects what it is: a smart backend that handles any AI task.
+"AI Router" described what it did in March 2026 — route prompts to LLMs. Since then it grew into a literary analysis engine, writing toolkit, OCR service, and external clients backend. "L'Intello" (French slang for "the brainy one") better reflects what it is: a smart backend that handles any AI task.

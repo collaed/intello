@@ -121,7 +121,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.headers.get("X-Auth-User"):
             return await call_next(request)
         auth = request.headers.get("Authorization", "")
-        # Bearer token (for API clients like audiobookshelf)
+        # Bearer token (for API clients like external clients)
         if auth.startswith("Bearer "):
             if TOKEN and auth[7:] == TOKEN:
                 return await call_next(request)

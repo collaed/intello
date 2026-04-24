@@ -94,7 +94,7 @@
 
 **US-70**: As a developer, I want an OpenAI-compatible API so any client can use L'Intello as a drop-in replacement.
 
-**US-71**: As an audiobookshelf admin, I want L'Intello to provide AI features (book chat, recaps, search) via HTTP.
+**US-71**: As an external clients admin, I want L'Intello to provide AI features (book chat, recaps, search) via HTTP.
 
 **US-72**: As a developer, I want webhooks so external services can trigger L'Intello actions.
 
