@@ -227,6 +227,88 @@ def _detect_image_regions(paragraphs: list, page_w: int, page_h: int) -> list:
 
     return regions
 
+def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
+                    pages: str = "") -> dict:
+    """Hybrid OCR: real text on clean background + preserved illustrations.
+    Text regions → rendered as actual text (small, searchable, selectable).
+    Image regions → cropped from original scan (preserved as-is).
+    Result is dramatically smaller than searchable_pdf mode."""
+    from pdf2image import convert_from_path
+    import io
+
+    lang = _normalize_lang(language)
+
+    page_range = None
+    if pages:
+        parts = pages.split("-")
+        if len(parts) == 2:
+            page_range = (int(parts[0]), int(parts[1]))
+
+    images = convert_from_path(
+        pdf_path, dpi=300,
+        first_page=page_range[0] if page_range else None,
+        last_page=page_range[1] if page_range else None,
+    )
+
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        return {"ok": False, "error": "pymupdf not installed"}
+
+    doc = fitz.open()
+    total_conf = []
+
+    for i, img in enumerate(images):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            img.save(f.name, "PNG")
+            page_ocr = ocr_image(f.name, lang, "json")
+            os.unlink(f.name)
+
+        paragraphs = page_ocr.get("paragraphs", [])
+        image_regions = _detect_image_regions(paragraphs, img.width, img.height)
+        if page_ocr.get("confidence"):
+            total_conf.append(page_ocr["confidence"])
+
+        # PDF page in points (72 dpi)
+        w_pt = img.width * 72 / 300
+        h_pt = img.height * 72 / 300
+        page = doc.new_page(width=w_pt, height=h_pt)
+        sx = w_pt / img.width
+        sy = h_pt / img.height
+
+        # Insert illustration regions as cropped images from original
+        for region in image_regions:
+            bbox = region["bbox"]
+            cropped = img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
+            buf = io.BytesIO()
+            cropped.save(buf, "PNG", optimize=True)
+            buf.seek(0)
+            rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
+            page.insert_image(rect, stream=buf.getvalue())
+
+        # Insert text as real text on clean background
+        for para in paragraphs:
+            if not para.get("text") or not para.get("bbox"):
+                continue
+            bbox = para["bbox"]
+            rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
+            fontsize = max(7, min(12, (bbox[3] - bbox[1]) * sy * 0.65))
+            try:
+                page.insert_textbox(rect, para["text"], fontsize=fontsize,
+                                     fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+            except Exception:
+                page.insert_text((bbox[0] * sx, bbox[3] * sy), para["text"],
+                                  fontsize=fontsize, fontname="helv")
+
+    doc.save(output_path, deflate=True, garbage=4)
+    doc.close()
+
+    avg_conf = sum(total_conf) / len(total_conf) if total_conf else 0
+    size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+    return {"ok": True, "size_bytes": size, "pages": len(images),
+            "avg_confidence": round(avg_conf, 1), "engine": "tesseract+hybrid"}
+
+
 # Map common language codes to Tesseract 3-letter codes
 LANG_MAP = {
     "en": "eng", "fr": "fra", "de": "deu", "es": "spa",

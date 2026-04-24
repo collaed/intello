@@ -49,7 +49,8 @@ async def ocr_pdf(
     async_mode: bool = Form(False),
 ):
     """OCR a PDF. async_mode=true for background processing.
-    output: json|structured|text|searchable_pdf."""
+    output: json|structured|text|searchable_pdf|hybrid.
+    hybrid = real text + preserved illustrations (smallest output)."""
     import tempfile
     content = await file.read()
     max_bytes = ocr.MAX_UPLOAD_MB * 1024 * 1024
@@ -70,6 +71,11 @@ async def ocr_pdf(
                 os.unlink(tmp)
                 return {"ok": result["ok"], "result_path": out_path if result["ok"] else None,
                         "error": result.get("error")}
+            if output == "hybrid":
+                out_path = tmp + "_hybrid.pdf"
+                result = ocr.ocr_pdf_hybrid(tmp, out_path, language, pages)
+                os.unlink(tmp)
+                return result
             structured = output == "structured"
             result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
             os.unlink(tmp)
@@ -87,6 +93,18 @@ async def ocr_pdf(
             return FileResponse(out_path, media_type="application/pdf",
                                 filename=f"ocr_{file.filename}")
         return {"error": result.get("error", "OCR failed")}
+
+    if output == "hybrid":
+        out_path = tmp + "_hybrid.pdf"
+        result = ocr.ocr_pdf_hybrid(tmp, out_path, language, pages)
+        os.unlink(tmp)
+        if result["ok"]:
+            return FileResponse(out_path, media_type="application/pdf",
+                                filename=f"hybrid_{file.filename}",
+                                headers={"X-OCR-Engine": result.get("engine", ""),
+                                         "X-OCR-Confidence": str(result.get("avg_confidence", 0)),
+                                         "X-OCR-Size": str(result.get("size_bytes", 0))})
+        return {"error": result.get("error", "Hybrid OCR failed")}
 
     structured = output == "structured"
     result = ocr.ocr_pdf_to_text(tmp, language, pages, structured=structured)
