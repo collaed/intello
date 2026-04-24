@@ -240,13 +240,20 @@ def _normalize_lang(language: str) -> str:
     return LANG_MAP.get(language.lower().strip(), language)
 
 
-def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", pages: str = "") -> dict:
-    """Create a searchable PDF using OCRmyPDF. Returns {ok, error}."""
+def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng",
+                       pages: str = "", optimize: int = 3, force: bool = False) -> dict:
+    """Create a searchable PDF using OCRmyPDF.
+    optimize: 0=none, 1=lossless, 2=lossy, 3=aggressive (smallest).
+    force: True=re-OCR all pages, False=skip pages that already have text.
+    Returns {ok, error, size_bytes}."""
     lang = _normalize_lang(language)
-    cmd = ["ocrmypdf", "-l", lang, "--force-ocr", "--optimize", "1",
+    cmd = ["ocrmypdf", "-l", lang,
+           "--skip-text" if not force else "--force-ocr",
+           "--optimize", str(optimize),
            "--rotate-pages",
            "--deskew",
            "--clean",
+           "--jbig2-lossy" if optimize >= 2 else "--jbig2-threshold", "0.85",
            ]
     if pages:
         cmd.extend(["--pages", pages])
@@ -254,9 +261,9 @@ def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", p
 
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        # Exit 0 = success, exit 4 = "file already has text" (still produces output)
         if r.returncode in (0, 4):
-            return {"ok": True}
+            size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            return {"ok": True, "size_bytes": size}
         return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-500:]}" if r.stderr else f"exit {r.returncode}"}
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "Timeout (>30 min)"}
@@ -297,9 +304,20 @@ def _init_jobdb():
             pages_done INTEGER DEFAULT 0,
             result_path TEXT,
             error TEXT,
+            engine_used TEXT DEFAULT '',
+            avg_confidence REAL DEFAULT 0,
+            input_size INTEGER DEFAULT 0,
+            output_size INTEGER DEFAULT 0,
             created_at REAL,
             updated_at REAL
         )""")
+        # Migrate old tables
+        for col, default in [("engine_used", "''"), ("avg_confidence", "0"),
+                              ("input_size", "0"), ("output_size", "0")]:
+            try:
+                conn.execute(f"SELECT {col} FROM ocr_jobs LIMIT 1")
+            except Exception:
+                conn.execute(f"ALTER TABLE ocr_jobs ADD COLUMN {col} DEFAULT {default}")
 
 
 _init_jobdb()
@@ -338,7 +356,9 @@ async def run_job(job_id: str):
     if not job:
         return
 
-    _update_job(job_id, status="processing")
+    # Record input size
+    input_size = os.path.getsize(job["file_path"]) if os.path.exists(job["file_path"]) else 0
+    _update_job(job_id, status="processing", input_size=input_size)
 
     try:
         if job["output"] == "searchable_pdf":
@@ -347,7 +367,9 @@ async def run_job(job_id: str):
             result = await loop.run_in_executor(
                 None, ocr_pdf_searchable, job["file_path"], out_path, job["language"], job["pages"])
             if result["ok"]:
-                _update_job(job_id, status="complete", result_path=out_path, progress=100)
+                _update_job(job_id, status="complete", result_path=out_path, progress=100,
+                            engine_used="tesseract+ocrmypdf",
+                            output_size=result.get("size_bytes", 0))
             else:
                 _update_job(job_id, status="failed", error=result.get("error", "OCRmyPDF failed"))
         else:
@@ -357,8 +379,15 @@ async def run_job(job_id: str):
             out_path = str(JOBS_DIR / f"{job_id}.json")
             with open(out_path, "w") as f:
                 json.dump(result, f)
+
+            # Calculate average confidence across pages
+            confidences = [p.get("confidence", 0) for p in result.get("pages", []) if p.get("confidence")]
+            avg_conf = sum(confidences) / len(confidences) if confidences else 0
+
             _update_job(job_id, status="complete", result_path=out_path,
-                        progress=100, pages_done=result["processed_pages"])
+                        progress=100, pages_done=result["processed_pages"],
+                        engine_used="tesseract", avg_confidence=round(avg_conf, 1),
+                        output_size=os.path.getsize(out_path) if os.path.exists(out_path) else 0)
     except Exception as e:
         _update_job(job_id, status="failed", error=str(e))
     finally:

@@ -105,8 +105,12 @@ async def ocr_create_job(
     language: str = Form("eng"),
     output: str = Form("searchable_pdf"),
     pages: str = Form(""),
+    optimize: int = Form(3),
+    force_ocr: bool = Form(False),
 ):
-    """Create an async OCR job for large PDFs."""
+    """Create an async OCR job for large PDFs.
+    optimize: 0=none, 1=lossless, 2=lossy, 3=aggressive (smallest output).
+    force_ocr: True=re-OCR all pages, False=skip pages with existing text (default, smaller output)."""
     import tempfile
     import httpx
 
