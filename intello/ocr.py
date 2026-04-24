@@ -9,8 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-# Job storage
-_jobs: dict[str, dict] = {}
+# Job storage (SQLite-persisted, survives restarts)
 JOBS_DIR = Path(os.environ.get("OCR_JOBS_DIR", "/data/ocr_jobs"))
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -244,37 +243,81 @@ def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", p
         return False
 
 
-# --- Async job management ---
+# --- Async job management (SQLite-persisted) ---
+
+import sqlite3
+from contextlib import contextmanager
+
+_JOBS_DB = os.environ.get("OCR_JOBS_DB", "/data/ocr_jobs.db")
+
+
+@contextmanager
+def _jobdb():
+    os.makedirs(os.path.dirname(_JOBS_DB), exist_ok=True)
+    conn = sqlite3.connect(_JOBS_DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _init_jobdb():
+    with _jobdb() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS ocr_jobs (
+            job_id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'queued',
+            file_path TEXT,
+            language TEXT DEFAULT 'eng',
+            output TEXT DEFAULT 'searchable_pdf',
+            pages TEXT DEFAULT '',
+            progress INTEGER DEFAULT 0,
+            pages_done INTEGER DEFAULT 0,
+            result_path TEXT,
+            error TEXT,
+            created_at REAL,
+            updated_at REAL
+        )""")
+
+
+_init_jobdb()
+
 
 def create_job(file_path: str, language: str, output: str, pages: str = "") -> str:
     job_id = uuid.uuid4().hex[:12]
-    _jobs[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "file_path": file_path,
-        "language": language,
-        "output": output,
-        "pages": pages,
-        "progress": 0,
-        "pages_done": 0,
-        "created_at": time.time(),
-        "result_path": None,
-        "error": None,
-    }
+    now = time.time()
+    with _jobdb() as conn:
+        conn.execute("""INSERT INTO ocr_jobs
+                        (job_id, status, file_path, language, output, pages, created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?)""",
+                     (job_id, "queued", file_path, language, output, pages, now, now))
     return job_id
 
 
+def _update_job(job_id: str, **kwargs):
+    if not kwargs:
+        return
+    kwargs["updated_at"] = time.time()
+    sets = ", ".join(f"{k}=?" for k in kwargs)
+    vals = list(kwargs.values()) + [job_id]
+    with _jobdb() as conn:
+        conn.execute(f"UPDATE ocr_jobs SET {sets} WHERE job_id=?", vals)
+
+
 def get_job(job_id: str) -> dict | None:
-    return _jobs.get(job_id)
+    with _jobdb() as conn:
+        row = conn.execute("SELECT * FROM ocr_jobs WHERE job_id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
 
 
 async def run_job(job_id: str):
-    """Process an OCR job asynchronously."""
-    job = _jobs.get(job_id)
+    """Process an OCR job asynchronously. Status persisted to SQLite."""
+    job = get_job(job_id)
     if not job:
         return
 
-    job["status"] = "processing"
+    _update_job(job_id, status="processing")
 
     try:
         if job["output"] == "searchable_pdf":
@@ -283,30 +326,24 @@ async def run_job(job_id: str):
             ok = await loop.run_in_executor(
                 None, ocr_pdf_searchable, job["file_path"], out_path, job["language"], job["pages"])
             if ok:
-                job["status"] = "complete"
-                job["result_path"] = out_path
-                job["progress"] = 100
+                _update_job(job_id, status="complete", result_path=out_path, progress=100)
             else:
-                job["status"] = "failed"
-                job["error"] = "OCRmyPDF failed"
+                _update_job(job_id, status="failed", error="OCRmyPDF failed")
         else:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None, ocr_pdf_to_text, job["file_path"], job["language"], job["pages"])
-            job["status"] = "complete"
-            job["progress"] = 100
-            job["pages_done"] = result["processed_pages"]
             out_path = str(JOBS_DIR / f"{job_id}.json")
             with open(out_path, "w") as f:
                 json.dump(result, f)
-            job["result_path"] = out_path
+            _update_job(job_id, status="complete", result_path=out_path,
+                        progress=100, pages_done=result["processed_pages"])
     except Exception as e:
-        job["status"] = "failed"
-        job["error"] = str(e)
+        _update_job(job_id, status="failed", error=str(e))
     finally:
         # Clean up the uploaded source file
         src = job.get("file_path", "")
-        if src and os.path.exists(src) and src != job.get("result_path"):
+        if src and os.path.exists(src) and src != get_job(job_id).get("result_path"):
             try:
                 os.unlink(src)
             except OSError:
@@ -326,4 +363,7 @@ def cleanup_old_files(max_age_hours: int = 24):
                 removed += 1
         except OSError:
             pass
+    # Mark interrupted jobs as failed
+    with _jobdb() as conn:
+        conn.execute("UPDATE ocr_jobs SET status='failed', error='Interrupted by restart' WHERE status='processing'")
     return removed
