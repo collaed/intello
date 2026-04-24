@@ -380,32 +380,95 @@ def _normalize_lang(language: str) -> str:
 
 def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng",
                        pages: str = "", optimize: int = 3, force: bool = False) -> dict:
-    """Create a searchable PDF using OCRmyPDF.
-    optimize: 0=none, 1=lossless, 2=lossy, 3=aggressive (smallest).
-    force: True=re-OCR all pages, False=skip pages that already have text.
+    """Create a searchable PDF. Chunks large PDFs (>30 pages) to avoid OOM.
     Returns {ok, error, size_bytes}."""
     lang = _normalize_lang(language)
-    cmd = ["ocrmypdf", "-l", lang,
-           "--skip-text" if not force else "--force-ocr",
-           "--optimize", str(optimize),
-           "--rotate-pages",
-           "--deskew",
-           ]
-    # Skip --clean (unpaper) — it uses too much RAM on large PDFs
-    if pages:
-        cmd.extend(["--pages", pages])
-    cmd.extend([pdf_path, output_path])
 
+    # Get page count via pdfinfo
+    page_count = 0
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        if r.returncode in (0, 4):
-            size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-            return {"ok": True, "size_bytes": size}
-        return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-500:]}" if r.stderr else f"exit {r.returncode}"}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "Timeout (>30 min)"}
+        r = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True, timeout=30)
+        for line in r.stdout.split("\n"):
+            if line.startswith("Pages:"):
+                page_count = int(line.split(":")[1].strip())
+    except Exception:
+        pass
+
+    def _run_ocrmypdf(src, dst, page_range=""):
+        cmd = ["ocrmypdf", "-l", lang,
+               "--skip-text" if not force else "--force-ocr",
+               "--optimize", str(optimize),
+               "--rotate-pages", "--deskew"]
+        if page_range:
+            cmd.extend(["--pages", page_range])
+        cmd.extend([src, dst])
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+    # Small PDFs or specific page range: process whole file
+    if page_count <= 30 or page_count == 0 or pages:
+        try:
+            r = _run_ocrmypdf(pdf_path, output_path, pages)
+            if r.returncode in (0, 4):
+                return {"ok": True, "size_bytes": os.path.getsize(output_path) if os.path.exists(output_path) else 0}
+            return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-300:]}" if r.stderr else f"exit {r.returncode}"}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "Timeout"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # Large PDFs: process 20 pages at a time, merge results
+    try:
+        import fitz
+    except ImportError:
+        # Fallback: try whole file anyway
+        try:
+            r = _run_ocrmypdf(pdf_path, output_path)
+            if r.returncode in (0, 4):
+                return {"ok": True, "size_bytes": os.path.getsize(output_path) if os.path.exists(output_path) else 0}
+            return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-300:]}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    chunk_size = 20
+    chunk_paths = []
+    for start in range(1, page_count + 1, chunk_size):
+        end = min(start + chunk_size - 1, page_count)
+        chunk_out = f"{output_path}.chunk_{start}.pdf"
+        try:
+            r = _run_ocrmypdf(pdf_path, chunk_out, f"{start}-{end}")
+            if r.returncode in (0, 4) and os.path.exists(chunk_out):
+                chunk_paths.append(chunk_out)
+            else:
+                chunk_paths.append(None)  # failed chunk
+        except Exception:
+            chunk_paths.append(None)
+
+    # Merge chunks
+    try:
+        merged = fitz.open()
+        src = fitz.open(pdf_path)
+        for i, start in enumerate(range(0, page_count, chunk_size)):
+            end = min(start + chunk_size, page_count)
+            if i < len(chunk_paths) and chunk_paths[i]:
+                chunk_doc = fitz.open(chunk_paths[i])
+                merged.insert_pdf(chunk_doc)
+                chunk_doc.close()
+            else:
+                merged.insert_pdf(src, from_page=start, to_page=end - 1)
+        src.close()
+        merged.save(output_path, deflate=True, garbage=4)
+        merged.close()
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": f"Merge failed: {e}"}
+    finally:
+        for cp in chunk_paths:
+            if cp and os.path.exists(cp):
+                try:
+                    os.unlink(cp)
+                except OSError:
+                    pass
+
+    return {"ok": True, "size_bytes": os.path.getsize(output_path) if os.path.exists(output_path) else 0}
 
 
 # --- Async job management (SQLite-persisted) ---
