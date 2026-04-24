@@ -1,47 +1,70 @@
-"""Rate limit tracking — persists daily usage counts per provider."""
-import json
+"""Rate limit tracking — SQLite-backed for concurrent access safety."""
 import os
+import sqlite3
+from contextlib import contextmanager
 from datetime import date
 
-USAGE_FILE = os.environ.get("USAGE_FILE", "/data/usage.json")
+DB_PATH = os.environ.get("RATELIMIT_DB", "/data/ratelimit.db")
 
 
-def _load() -> dict:
-    if os.path.exists(USAGE_FILE):
-        try:
-            with open(USAGE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+@contextmanager
+def _db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def _save(data: dict) -> None:
-    os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
-    with open(USAGE_FILE, "w") as f:
-        json.dump(data, f)
+def _init():
+    with _db() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS usage (
+            day TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY (day, model_id)
+        )""")
+
+
+_init()
 
 
 def _today() -> str:
     return date.today().isoformat()
 
 
+def _load() -> dict:
+    """Compat: return dict format for usage history endpoint."""
+    with _db() as conn:
+        rows = conn.execute("SELECT day, model_id, count FROM usage ORDER BY day DESC").fetchall()
+    result: dict = {}
+    for r in rows:
+        result.setdefault(r["day"], {})[r["model_id"]] = r["count"]
+    return result
+
+
 def get_usage(model_id: str) -> int:
     """Return today's request count for a model."""
-    data = _load()
-    day = data.get(_today(), {})
-    return day.get(model_id, 0)
+    with _db() as conn:
+        row = conn.execute("SELECT count FROM usage WHERE day=? AND model_id=?",
+                           (_today(), model_id)).fetchone()
+    return row["count"] if row else 0
 
 
 def record_usage(model_id: str) -> int:
-    """Increment and return today's count for a model."""
-    data = _load()
+    """Increment and return today's count for a model. Atomic via UPSERT."""
     today = _today()
-    # Prune old days (keep only today)
-    data = {today: data.get(today, {})}
-    data[today][model_id] = data[today].get(model_id, 0) + 1
-    _save(data)
-    return data[today][model_id]
+    with _db() as conn:
+        conn.execute("""INSERT INTO usage (day, model_id, count) VALUES (?, ?, 1)
+                        ON CONFLICT(day, model_id) DO UPDATE SET count = count + 1""",
+                     (today, model_id))
+        row = conn.execute("SELECT count FROM usage WHERE day=? AND model_id=?",
+                           (today, model_id)).fetchone()
+    return row["count"] if row else 1
 
 
 def remaining(model_id: str, daily_limit: int) -> int:

@@ -13,6 +13,10 @@ from pathlib import Path
 JOBS_DIR = Path(os.environ.get("OCR_JOBS_DIR", "/data/ocr_jobs"))
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Process pool for CPU-bound OCR work — prevents blocking the event loop
+from concurrent.futures import ProcessPoolExecutor
+_ocr_pool = ProcessPoolExecutor(max_workers=1)  # 1 worker = no concurrent OOM
+
 
 def get_languages() -> list[str]:
     """Get installed Tesseract languages."""
@@ -682,10 +686,11 @@ def _update_job(job_id: str, **kwargs):
     if not kwargs:
         return
     kwargs["updated_at"] = time.time()
+    # Column names from code (not user input) — safe for f-string; values parameterized
     sets = ", ".join(f"{k}=?" for k in kwargs)
     vals = list(kwargs.values()) + [job_id]
     with _jobdb() as conn:
-        conn.execute(f"UPDATE ocr_jobs SET {sets} WHERE job_id=?", vals)
+        conn.execute(f"UPDATE ocr_jobs SET {sets} WHERE job_id=?", vals)  # noqa: S608
 
 
 def get_job(job_id: str) -> dict | None:
@@ -709,17 +714,29 @@ async def run_job(job_id: str):
             out_path = str(JOBS_DIR / f"{job_id}.pdf")
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                None, ocr_pdf_searchable, job["file_path"], out_path, job["language"], job["pages"])
+                _ocr_pool, ocr_pdf_searchable, job["file_path"], out_path, job["language"], job["pages"])
             if result["ok"]:
                 _update_job(job_id, status="complete", result_path=out_path, progress=100,
                             engine_used="tesseract+ocrmypdf",
                             output_size=result.get("size_bytes", 0))
             else:
                 _update_job(job_id, status="failed", error=result.get("error", "OCRmyPDF failed"))
+        elif job["output"] == "hybrid":
+            out_path = str(JOBS_DIR / f"{job_id}.pdf")
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                _ocr_pool, ocr_pdf_hybrid, job["file_path"], out_path, job["language"], job["pages"])
+            if result.get("ok"):
+                _update_job(job_id, status="complete", result_path=out_path, progress=100,
+                            engine_used=result.get("engine", "hybrid"),
+                            avg_confidence=result.get("avg_confidence", 0),
+                            output_size=result.get("size_bytes", 0))
+            else:
+                _update_job(job_id, status="failed", error=result.get("error", "Hybrid OCR failed"))
         else:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                None, ocr_pdf_to_text, job["file_path"], job["language"], job["pages"])
+                _ocr_pool, ocr_pdf_to_text, job["file_path"], job["language"], job["pages"])
             out_path = str(JOBS_DIR / f"{job_id}.json")
             with open(out_path, "w") as f:
                 json.dump(result, f)

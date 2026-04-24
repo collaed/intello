@@ -228,3 +228,49 @@ async def status():
             "stt_daily_limit_seconds": 28800,
         },
     }
+
+
+@router.get("/api/health")
+async def health():
+    """Health check — verifies all critical subsystems."""
+    checks = {}
+
+    # Tesseract
+    checks["tesseract"] = shutil.which("tesseract") is not None
+
+    # SQLite databases
+    for name, path in [("cache", "/data/cache.db"), ("memory", "/data/memory.db"),
+                        ("ocr_jobs", "/data/ocr_jobs.db"), ("costs", "/data/costs.db")]:
+        try:
+            import sqlite3
+            conn = sqlite3.connect(path, timeout=2)
+            conn.execute("SELECT 1")
+            conn.close()
+            checks[f"db_{name}"] = True
+        except Exception as e:
+            checks[f"db_{name}"] = f"FAIL: {e}"
+
+    # Disk space
+    try:
+        stat = os.statvfs("/data")
+        free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        checks["disk_free_gb"] = round(free_gb, 1)
+        checks["disk_ok"] = free_gb > 1.0
+    except Exception:
+        checks["disk_ok"] = False
+
+    # API keys
+    from intello.web import _providers
+    keys_ok = sum(1 for p in _providers if p.available)
+    checks["api_keys_valid"] = keys_ok
+    checks["api_keys_total"] = len(_providers)
+
+    # Piper TTS
+    checks["piper_tts"] = speech.tts_available()
+
+    # Overall
+    critical = [checks.get("tesseract"), checks.get("disk_ok"),
+                checks.get("db_cache"), checks.get("db_memory")]
+    checks["healthy"] = all(c is True for c in critical) and keys_ok > 0
+
+    return checks
