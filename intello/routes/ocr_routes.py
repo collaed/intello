@@ -143,7 +143,16 @@ async def ocr_create_job(
         if parsed.scheme not in ("http", "https"):
             return {"error": "Only http/https URLs allowed"}
         host = parsed.hostname or ""
-        if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("169.254.") or host.startswith("10.") or host.startswith("192.168.") or host.startswith("172."):
+        if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("169.254.") or host.startswith("10.") or host.startswith("192.168."):
+            return {"error": "Internal URLs not allowed"}
+        # 172.16.0.0 - 172.31.255.255 are private (not 172.0-172.15)
+        if host.startswith("172."):
+            try:
+                second = int(host.split(".")[1])
+                if 16 <= second <= 31:
+                    return {"error": "Internal URLs not allowed"}
+            except (ValueError, IndexError):
+                pass
             return {"error": "Internal URLs not allowed"}
         async with httpx.AsyncClient(timeout=120, follow_redirects=False) as c:
             r = await c.get(file_url)
