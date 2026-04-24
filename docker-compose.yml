@@ -1,3 +1,4 @@
+# Production: behind reverse proxy (Caddy/Nginx) — expose only to Docker network
 services:
   intello:
     build: .
@@ -7,6 +8,9 @@ services:
       - web
     expose:
       - "8000"
+    # For standalone (no reverse proxy), uncomment:
+    # ports:
+    #   - "8000:8000"
     env_file:
       - .env
     volumes:

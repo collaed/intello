@@ -55,15 +55,22 @@ app.include_router(speech_router)
 app.include_router(integration_router)
 app.include_router(literary_router)
 
-# Auth — all credentials from environment variables
+# Auth — all credentials from environment variables (NO hardcoded defaults)
 import json as _json
-_users_raw = os.environ.get("INTELLO_USERS", '{"admin": "changeme"}')
-try:
-    USERS = _json.loads(_users_raw)
-except Exception:
-    USERS = {"admin": "changeme"}
-TOKEN = os.environ.get("INTELLO_TOKEN", "changeme")
-PREMIUM_USERS = set(os.environ.get("INTELLO_PREMIUM_USERS", "admin").split(","))
+_users_raw = os.environ.get("INTELLO_USERS", "")
+if not _users_raw:
+    log.warning("INTELLO_USERS not set — authentication disabled for Docker-internal only")
+    USERS: dict[str, str] = {}
+else:
+    try:
+        USERS = _json.loads(_users_raw)
+    except Exception:
+        log.error("INTELLO_USERS is not valid JSON")
+        USERS = {}
+TOKEN = os.environ.get("INTELLO_TOKEN", "")
+if not TOKEN:
+    log.warning("INTELLO_TOKEN not set — Bearer auth disabled")
+PREMIUM_USERS = set(os.environ.get("INTELLO_PREMIUM_USERS", "").split(",")) - {""}
 
 # Models restricted to specific users (everyone else gets them filtered out)
 PREMIUM_MODELS = {
@@ -116,7 +123,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("Authorization", "")
         # Bearer token (for API clients like audiobookshelf)
         if auth.startswith("Bearer "):
-            if auth[7:] == TOKEN:
+            if TOKEN and auth[7:] == TOKEN:
                 return await call_next(request)
         # Basic auth
         if auth.startswith("Basic "):
@@ -128,10 +135,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
         # Cookie
-        if request.cookies.get("intello_token") == TOKEN:
+        if TOKEN and request.cookies.get("intello_token") == TOKEN:
             return await call_next(request)
         # Query param
-        if request.query_params.get("token") == TOKEN:
+        if TOKEN and request.query_params.get("token") == TOKEN:
             return await call_next(request)
         # Login endpoint
         if request.url.path == "/login":

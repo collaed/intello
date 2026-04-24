@@ -71,28 +71,25 @@ def _calculator(expression: str) -> str:
 
 
 def _python_eval(code: str) -> str:
-    """Execute a small Python snippet safely (very restricted)."""
+    """Execute a small Python snippet in a subprocess sandbox."""
     if len(code.split("\n")) > 20:
         return "Error: code too long (max 20 lines)"
-    forbidden = ["import os", "import sys", "import subprocess", "open(", "__import__",
-                 "exec(", "eval(", "compile(", "globals", "locals"]
-    for f in forbidden:
-        if f in code:
-            return f"Error: forbidden operation: {f}"
+
     try:
-        import io, contextlib
-        buf = io.StringIO()
-        safe_globals = {"__builtins__": {"print": print, "range": range, "len": len,
-                                          "str": str, "int": int, "float": float,
-                                          "list": list, "dict": dict, "sorted": sorted,
-                                          "enumerate": enumerate, "zip": zip, "map": map,
-                                          "sum": sum, "min": min, "max": max, "abs": abs,
-                                          "round": round, "type": type, "isinstance": isinstance},
-                        "math": math, "json": json, "re": re}
-        with contextlib.redirect_stdout(buf):
-            exec(code, safe_globals)
-        output = buf.getvalue()
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", f"import math, json, re\n{code}"],
+            capture_output=True, text=True, timeout=10,
+            env={"PATH": "/usr/bin:/usr/local/bin", "HOME": "/tmp"},  # minimal env
+        )
+        output = result.stdout.strip()
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            # Filter out the wrapper line from tracebacks
+            return f"Error: {err[-300:]}"
         return output if output else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: execution timed out (10s limit)"
     except Exception as e:
         return f"Error: {e}"
 

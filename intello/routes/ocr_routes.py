@@ -137,7 +137,15 @@ async def ocr_create_job(
             f.write(await file.read())
             tmp = f.name
     elif file_url:
-        async with httpx.AsyncClient(timeout=120) as c:
+        # SSRF protection: only allow http(s) to non-internal IPs
+        from urllib.parse import urlparse
+        parsed = urlparse(file_url)
+        if parsed.scheme not in ("http", "https"):
+            return {"error": "Only http/https URLs allowed"}
+        host = parsed.hostname or ""
+        if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("169.254.") or host.startswith("10.") or host.startswith("192.168.") or host.startswith("172."):
+            return {"error": "Internal URLs not allowed"}
+        async with httpx.AsyncClient(timeout=120, follow_redirects=False) as c:
             r = await c.get(file_url)
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=str(ocr.JOBS_DIR)) as f:
                 f.write(r.content)
@@ -177,8 +185,13 @@ compat_router = APIRouter(tags=["ocr-compat"])
 @compat_router.get("/data/ocr_jobs/{filename}")
 async def serve_ocr_file(filename: str):
     """Serve OCR result files directly (BC compat)."""
-    path = f"/data/ocr_jobs/{filename}"
-    if os.path.exists(path):
-        media = "application/pdf" if filename.endswith(".pdf") else "application/json"
-        return FileResponse(path, media_type=media)
-    return Response("Not found", status_code=404)
+    # Sanitize: strip path components, allow only alphanumeric + dot + hyphen + underscore
+    import re
+    safe = re.sub(r'[^a-zA-Z0-9._-]', '', filename)
+    if not safe or safe != filename or '..' in filename:
+        return Response("Forbidden", status_code=403)
+    path = os.path.join("/data/ocr_jobs", safe)
+    if not os.path.isfile(path):
+        return Response("Not found", status_code=404)
+    media = "application/pdf" if safe.endswith(".pdf") else "application/json"
+    return FileResponse(path, media_type=media)
