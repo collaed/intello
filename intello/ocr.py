@@ -289,7 +289,11 @@ def _detect_font_style(paragraph: dict, img=None) -> tuple[str, float]:
 
 def _classify_image(img_bytes: bytes, img_bbox: tuple, page_area: float) -> str:
     """Classify an embedded image: 'pure_image' (photo/illustration) or 'text_image' (may contain text).
-    Conservative: if in doubt, assume it contains text so it goes through OCR."""
+
+    VERY conservative — only strips images that are CLEARLY photos/illustrations.
+    Anything with text characteristics (including colored backgrounds with text,
+    inverted text, callout boxes) goes through OCR.
+    """
     from PIL import Image
     import io
 
@@ -300,41 +304,60 @@ def _classify_image(img_bytes: bytes, img_bbox: tuple, page_area: float) -> str:
         pil_img = Image.open(io.BytesIO(img_bytes))
         w, h = pil_img.size
 
-        # Tiny images (<5% of page) are likely icons/bullets — keep as image
-        if area_ratio < 0.05:
+        # Tiny images (<3% of page) — icons, bullets, decorative elements
+        if area_ratio < 0.03:
             return "pure_image"
 
-        # Very wide and short = likely a horizontal rule or banner
-        if w > h * 5:
+        # Very wide and short = horizontal rule or thin banner
+        if w > h * 8:
             return "pure_image"
 
-        # Check color variance — photos have high variance, text-on-white has low
         import numpy as np
         arr = np.array(pil_img.convert("L"))  # grayscale
         std = float(np.std(arr))
         mean = float(np.mean(arr))
 
-        # High contrast with low mean = likely text on white (dark text, bright bg)
-        if std < 60 and mean > 200:
-            return "text_image"  # probably scanned text — needs OCR
+        # --- Detect text-bearing images (KEEP for OCR) ---
 
-        # Very high variance = photo/illustration
-        if std > 80:
-            return "pure_image"
+        # White/light text on dark background (inverted/negative text)
+        # Dark mean + some variance = likely colored box with white text
+        if mean < 100 and std > 30:
+            return "text_image"  # dark background with content — likely inverted text
 
-        # Medium variance — could be a diagram with labels
-        # Check edge density: text has many sharp edges, photos are smoother
-        from PIL import ImageFilter
-        edges = np.array(pil_img.convert("L").filter(ImageFilter.FIND_EDGES))
-        edge_ratio = float(np.mean(edges > 30))
+        # Colored background with text (callout boxes, highlighted sections)
+        # Check if image has a dominant non-white, non-black color
+        if pil_img.mode in ("RGB", "RGBA"):
+            rgb = np.array(pil_img.convert("RGB"))
+            r_std = float(np.std(rgb[:, :, 0]))
+            g_std = float(np.std(rgb[:, :, 1]))
+            b_std = float(np.std(rgb[:, :, 2]))
+            # Low per-channel variance but not grayscale = solid colored background
+            if max(r_std, g_std, b_std) < 70 and min(r_std, g_std, b_std) < 40:
+                # Solid-ish color — likely a text box with colored background
+                return "text_image"
 
-        # High edge density in a structured pattern = likely text or labeled diagram
-        if edge_ratio > 0.15:
-            return "text_image"  # conservative: send through OCR
+        # Any image with structured horizontal patterns = likely text lines
+        # Check row-by-row variance: text pages have alternating light/dark rows
+        if arr.shape[0] > 20:
+            row_means = np.mean(arr, axis=1)
+            row_variance = float(np.std(row_means))
+            if row_variance > 15:
+                return "text_image"  # horizontal banding = text lines
 
-        return "pure_image"
+        # --- Only classify as pure image if VERY clearly a photo ---
+
+        # Very high color variance across all channels = natural photo
+        if std > 70 and pil_img.mode in ("RGB", "RGBA"):
+            rgb = np.array(pil_img.convert("RGB"))
+            color_std = float(np.std(rgb))
+            if color_std > 60:
+                return "pure_image"  # high color diversity = photo
+
+        # Everything else: assume it contains text (safe default)
+        return "text_image"
+
     except Exception:
-        return "text_image"  # if analysis fails, assume it needs OCR (safe default)
+        return "text_image"  # if analysis fails, OCR it
 
 
 def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
