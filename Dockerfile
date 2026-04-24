@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     wget \
     unpaper \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Piper TTS
@@ -25,17 +26,18 @@ RUN wget -q -O /opt/piper/voices/en_US-lessac-medium.onnx https://huggingface.co
 
 ENV PATH="/opt/piper:${PATH}"
 
+# Create non-root user
+RUN useradd -m -u 1000 intello
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m spacy download en_core_web_sm
 COPY . .
 
-# Run as non-root user
-RUN useradd -m -u 1000 intello && \
-    mkdir -p /data && chown intello:intello /data && \
-    chown -R intello:intello /opt/piper
-USER intello
+# Entrypoint: fix data dir permissions then drop to non-root
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 
 EXPOSE 8000
-CMD ["uvicorn", "intello.web:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/start.sh"]
