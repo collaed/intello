@@ -51,6 +51,7 @@ def _auto_rotate(image_path: str) -> str | None:
 def ocr_image(image_path: str, language: str = "eng", output: str = "json") -> dict:
     """OCR a single image. Auto-detects and corrects rotation.
     output: json (structured), text (plain), hocr (HTML with positions)."""
+    language = _normalize_lang(language)
     try:
         # Auto-rotate using Tesseract's OSD (orientation/script detection)
         corrected_path = _auto_rotate(image_path)
@@ -147,6 +148,7 @@ def ocr_pdf_to_text(pdf_path: str, language: str = "eng", pages: str = "",
                     structured: bool = False) -> dict:
     """Extract text from a scanned PDF page by page.
     structured=True returns paragraphs with bounding boxes per page."""
+    language = _normalize_lang(language)
     from pdf2image import convert_from_path
 
     page_range = None
@@ -225,9 +227,23 @@ def _detect_image_regions(paragraphs: list, page_w: int, page_h: int) -> list:
 
     return regions
 
+# Map common language codes to Tesseract 3-letter codes
+LANG_MAP = {
+    "en": "eng", "fr": "fra", "de": "deu", "es": "spa",
+    "it": "ita", "pt": "por", "nl": "nld", "ru": "rus",
+    "eng": "eng", "fra": "fra", "deu": "deu", "spa": "spa",
+    "ita": "ita", "por": "por", "nld": "nld", "rus": "rus",
+}
+
+
+def _normalize_lang(language: str) -> str:
+    return LANG_MAP.get(language.lower().strip(), language)
+
+
 def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", pages: str = "") -> dict:
     """Create a searchable PDF using OCRmyPDF. Returns {ok, error}."""
-    cmd = ["ocrmypdf", "-l", language, "--force-ocr", "--optimize", "1",
+    lang = _normalize_lang(language)
+    cmd = ["ocrmypdf", "-l", lang, "--force-ocr", "--optimize", "1",
            "--rotate-pages",
            "--deskew",
            "--clean",
@@ -238,7 +254,8 @@ def ocr_pdf_searchable(pdf_path: str, output_path: str, language: str = "eng", p
 
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        if r.returncode == 0:
+        # Exit 0 = success, exit 4 = "file already has text" (still produces output)
+        if r.returncode in (0, 4):
             return {"ok": True}
         return {"ok": False, "error": f"exit {r.returncode}: {r.stderr[-500:]}" if r.stderr else f"exit {r.returncode}"}
     except subprocess.TimeoutExpired:
