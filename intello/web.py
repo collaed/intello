@@ -203,7 +203,7 @@ async def startup():
     # Preload sentence-transformer in background
     asyncio.get_event_loop().run_in_executor(None, cache._embedder)
     # Clean up stale OCR temp files from previous runs
-    cleaned = ocr.cleanup_old_files(max_age_hours=24)
+    cleaned = ocr.cleanup_old_files(max_age_hours=1)
     if cleaned:
         print(f"Cleaned {cleaned} stale OCR temp files")
 

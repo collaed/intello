@@ -181,10 +181,19 @@ async def ocr_job_result(job_id: str):
     if not job or job["status"] != "complete" or not job.get("result_path"):
         return {"error": "Job not complete"}
 
-    if job["result_path"].endswith(".pdf"):
-        return FileResponse(job["result_path"], media_type="application/pdf")
-    with open(job["result_path"]) as f:
-        return json.loads(f.read())
+    path = job["result_path"]
+    if not os.path.exists(path):
+        return {"error": "Result file already cleaned up"}
+
+    # Read into memory, delete file, return response
+    with open(path, "rb") as f:
+        data = f.read()
+    os.unlink(path)
+    ocr._update_job(job_id, status="delivered")
+
+    media = "application/pdf" if path.endswith(".pdf") else "application/json"
+    return Response(data, media_type=media,
+                    headers={"Content-Disposition": f"attachment; filename={job_id}.pdf"})
 
 
 # Compat: BC tries to GET the raw file path
@@ -193,8 +202,7 @@ compat_router = APIRouter(tags=["ocr-compat"])
 
 @compat_router.get("/data/ocr_jobs/{filename}")
 async def serve_ocr_file(filename: str):
-    """Serve OCR result files directly (BC compat)."""
-    # Sanitize: strip path components, allow only alphanumeric + dot + hyphen + underscore
+    """Serve OCR result files directly (BC compat). Deletes after download."""
     import re
     safe = re.sub(r'[^a-zA-Z0-9._-]', '', filename)
     if not safe or safe != filename or '..' in filename:
@@ -202,5 +210,10 @@ async def serve_ocr_file(filename: str):
     path = os.path.join("/data/ocr_jobs", safe)
     if not os.path.isfile(path):
         return Response("Not found", status_code=404)
+
+    with open(path, "rb") as f:
+        data = f.read()
+    os.unlink(path)
+
     media = "application/pdf" if safe.endswith(".pdf") else "application/json"
-    return FileResponse(path, media_type=media)
+    return Response(data, media_type=media)
