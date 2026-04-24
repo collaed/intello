@@ -19,7 +19,7 @@ def _get_cipher():
     """Get Fernet cipher from INTELLO_TOKEN. Returns None if cryptography not installed."""
     try:
         from cryptography.fernet import Fernet
-        token = os.environ.get("INTELLO_TOKEN", "ecb2026")
+        token = os.environ.get("INTELLO_TOKEN", "default-change-me")
         # Derive a 32-byte key from the token
         key = base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest())
         return Fernet(key)

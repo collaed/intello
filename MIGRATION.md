@@ -12,7 +12,7 @@
 | Docker container | `airouter` | `intello` |
 | Docker volume | `airouter_airouter-data` | `intello_intello-data` |
 | Python package | `airouter/` | `intello/` |
-| Web UI | `tools.ecb.pm/airouter/` | `tools.ecb.pm/intello/` |
+| Web UI | `your-domain.com/intello/` | `your-domain.com/intello/` |
 | Internal URL | `http://airouter:8000` | `http://intello:8000` |
 | Cookie name | `airouter_token` | `intello_token` |
 

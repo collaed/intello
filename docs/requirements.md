@@ -449,7 +449,7 @@ Successful login shall set an `intello_token` cookie with HttpOnly, 30-day max-a
 ### Authentication Layers (evaluated in order)
 1. **Docker network trust**: 172.x.x.x and 127.0.0.1 bypass all auth
 2. **Forward proxy header**: X-Auth-User from Caddy trusted without verification
-3. **Bearer token**: Compared against INTELLO_TOKEN env var (default: "ecb2026")
+3. **Bearer token**: Compared against INTELLO_TOKEN env var (default: "your-token-here")
 4. **Basic auth**: Username/password compared against hardcoded USERS dict
 5. **Cookie**: intello_token cookie compared against TOKEN
 6. **Query param**: ?token= compared against TOKEN

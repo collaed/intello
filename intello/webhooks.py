@@ -8,7 +8,7 @@ import hmac
 from contextlib import contextmanager
 
 DB_PATH = os.environ.get("WEBHOOK_DB", "/data/webhooks.db")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "intello_webhook_2026")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 
 @contextmanager

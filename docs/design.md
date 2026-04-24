@@ -382,7 +382,7 @@ sequenceDiagram
     AM->>AM: No X-Auth-User, no Bearer, no cookie
     AM-->>B: Login page HTML
 
-    B->>AM: POST /login (password=ecb2026)
+    B->>AM: POST /login (password=your-token-here)
     AM->>AM: /login path → pass through
     AM->>App: Set cookie, redirect
     App-->>B: 303 + Set-Cookie: intello_token
@@ -401,7 +401,7 @@ sequenceDiagram
 
     Note over B,App: Path 3: API client with Bearer
     participant API as API Client
-    API->>AM: POST /v1/chat/completions (Bearer ecb2026)
+    API->>AM: POST /v1/chat/completions (Bearer your-token-here)
     AM->>AM: Bearer matches TOKEN ✓
     AM->>App: Authenticated
     App-->>API: Chat response
@@ -623,7 +623,7 @@ webhook_log (id INT PK AUTO, hook_id TEXT, payload JSON, result TEXT, ts REAL)
 | ID | Severity | Location | Issue |
 |----|----------|----------|-------|
 | TD-01 | Low | `web.py:28,32` | Duplicate import: `check_confidence` imported from guardrails twice |
-| TD-02 | High | `web.py:45` | Hardcoded credentials: `USERS = {"eddy": "airouter2026", "ecb": "ecb2026"}` in plaintext |
+| TD-02 | High | `web.py:45` | Hardcoded credentials: `USERS = {"eddy": "your-password-here", "ecb": "your-token-here"}` in plaintext |
 | TD-03 | Medium | `backends._call_nanogpt()` | NanoGPT auth broken: /v1/models works but /v1/chat/completions returns 401. Backend exists but is non-functional. |
 | TD-04 | Low | `research.probe_reference_sites()` | Undocumented startup feature: scrapes Artificial Analysis and Chatbot Arena on every container start. User-Agent still says "AIRouter/1.0". |
 | TD-05 | Medium | `web._scheduler_loop()` | Bare `except Exception: pass` swallows all errors silently. Failed scheduled tasks produce no logs or alerts. |
