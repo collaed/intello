@@ -283,16 +283,75 @@ def _detect_font_style(paragraph: dict, img=None) -> tuple[str, float]:
     return "helv", fontsize  # Helvetica (sans-serif)
 
 
-def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
-                    pages: str = "") -> dict:
-    """Hybrid OCR: real text on clean background + preserved illustrations.
-    Text regions → rendered as actual text (small, searchable, selectable).
-    Image regions → cropped from original scan (preserved as-is).
-    Result is dramatically smaller than searchable_pdf mode."""
-    from pdf2image import convert_from_path
+def _classify_image(img_bytes: bytes, img_bbox: tuple, page_area: float) -> str:
+    """Classify an embedded image: 'pure_image' (photo/illustration) or 'text_image' (may contain text).
+    Conservative: if in doubt, assume it contains text so it goes through OCR."""
+    from PIL import Image
     import io
 
+    img_area = (img_bbox[2] - img_bbox[0]) * (img_bbox[3] - img_bbox[1])
+    area_ratio = img_area / page_area if page_area > 0 else 0
+
+    try:
+        pil_img = Image.open(io.BytesIO(img_bytes))
+        w, h = pil_img.size
+
+        # Tiny images (<5% of page) are likely icons/bullets — keep as image
+        if area_ratio < 0.05:
+            return "pure_image"
+
+        # Very wide and short = likely a horizontal rule or banner
+        if w > h * 5:
+            return "pure_image"
+
+        # Check color variance — photos have high variance, text-on-white has low
+        import numpy as np
+        arr = np.array(pil_img.convert("L"))  # grayscale
+        std = float(np.std(arr))
+        mean = float(np.mean(arr))
+
+        # High contrast with low mean = likely text on white (dark text, bright bg)
+        if std < 60 and mean > 200:
+            return "text_image"  # probably scanned text — needs OCR
+
+        # Very high variance = photo/illustration
+        if std > 80:
+            return "pure_image"
+
+        # Medium variance — could be a diagram with labels
+        # Check edge density: text has many sharp edges, photos are smoother
+        from PIL import ImageFilter
+        edges = np.array(pil_img.convert("L").filter(ImageFilter.FIND_EDGES))
+        edge_ratio = float(np.mean(edges > 30))
+
+        # High edge density in a structured pattern = likely text or labeled diagram
+        if edge_ratio > 0.15:
+            return "text_image"  # conservative: send through OCR
+
+        return "pure_image"
+    except Exception:
+        return "text_image"  # if analysis fails, assume it needs OCR (safe default)
+
+
+def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
+                    pages: str = "") -> dict:
+    """Three-phase hybrid OCR:
+    Phase 1: Classify each page and strip pure images (photos/illustrations)
+    Phase 2: OCR the text-only version (faster, more accurate, cheaper escalation)
+    Phase 3: Recombine OCR'd text + original illustrations
+
+    Pages classified as:
+    - >70% pure image area: keep original page as-is (no OCR)
+    - 30-70% pure image: strip images → OCR text → recombine
+    - <30% pure image: discard page image, render as pure text
+    """
+    try:
+        import fitz
+    except ImportError:
+        return {"ok": False, "error": "pymupdf not installed"}
+
     lang = _normalize_lang(language)
+    src = fitz.open(pdf_path)
 
     page_range = None
     if pages:
@@ -300,69 +359,154 @@ def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
         if len(parts) == 2:
             page_range = (int(parts[0]), int(parts[1]))
 
-    images = convert_from_path(
-        pdf_path, dpi=300,
-        first_page=page_range[0] if page_range else None,
-        last_page=page_range[1] if page_range else None,
-    )
+    start_page = (page_range[0] - 1) if page_range else 0
+    end_page = page_range[1] if page_range else src.page_count
 
-    try:
-        import fitz  # pymupdf
-    except ImportError:
-        return {"ok": False, "error": "pymupdf not installed"}
+    # Phase 1: Classify pages
+    page_plans = []  # [{type: "full_image"|"mixed"|"text_only", images: [...]}]
 
-    doc = fitz.open()
+    for page_idx in range(start_page, end_page):
+        page = src[page_idx]
+        page_area = page.rect.width * page.rect.height
+        img_list = page.get_images(full=True)
+
+        pure_images = []  # images to preserve
+        text_images = []  # images that may contain text (need OCR)
+        total_pure_area = 0
+
+        for img_info in img_list:
+            xref = img_info[0]
+            try:
+                img_bytes = src.extract_image(xref)["image"]
+                # Get image bbox on page
+                img_rects = page.get_image_rects(xref)
+                if not img_rects:
+                    continue
+                bbox = img_rects[0]
+                img_area = bbox.width * bbox.height
+
+                classification = _classify_image(img_bytes, (bbox.x0, bbox.y0, bbox.x1, bbox.y1), page_area)
+
+                if classification == "pure_image":
+                    pure_images.append({"xref": xref, "bbox": bbox, "bytes": img_bytes, "area": img_area})
+                    total_pure_area += img_area
+                else:
+                    text_images.append({"xref": xref, "bbox": bbox, "area": img_area})
+            except Exception:
+                continue
+
+        image_ratio = total_pure_area / page_area if page_area > 0 else 0
+
+        if image_ratio > 0.70:
+            page_plans.append({"type": "full_image", "page_idx": page_idx, "images": pure_images})
+        elif image_ratio > 0.30:
+            page_plans.append({"type": "mixed", "page_idx": page_idx, "images": pure_images})
+        else:
+            page_plans.append({"type": "text_only", "page_idx": page_idx, "images": pure_images})
+
+    # Phase 2: Create stripped PDF (text-images only) and OCR it
+    pages_to_ocr = [p["page_idx"] for p in page_plans if p["type"] != "full_image"]
+
+    ocr_results = {}  # page_idx → {paragraphs, confidence}
+    if pages_to_ocr:
+        from pdf2image import convert_from_path
+        # Render only the pages that need OCR
+        for page_idx in pages_to_ocr:
+            page_num = page_idx + 1  # pdf2image is 1-indexed
+            imgs = convert_from_path(pdf_path, dpi=300, first_page=page_num, last_page=page_num)
+            if imgs:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    imgs[0].save(f.name, "PNG")
+                    result = ocr_image(f.name, lang, "json")
+                    os.unlink(f.name)
+                ocr_results[page_idx] = result
+
+    # Phase 3: Recombine
+    out_doc = fitz.open()
     total_conf = []
 
-    for i, img in enumerate(images):
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            img.save(f.name, "PNG")
-            page_ocr = ocr_image(f.name, lang, "json")
-            os.unlink(f.name)
+    for plan in page_plans:
+        page_idx = plan["page_idx"]
+        src_page = src[page_idx]
+        w = src_page.rect.width
+        h = src_page.rect.height
 
-        paragraphs = page_ocr.get("paragraphs", [])
-        image_regions = _detect_image_regions(paragraphs, img.width, img.height)
-        if page_ocr.get("confidence"):
-            total_conf.append(page_ocr["confidence"])
+        if plan["type"] == "full_image":
+            # Keep original page exactly as-is
+            out_doc.insert_pdf(src, from_page=page_idx, to_page=page_idx)
 
-        # PDF page in points (72 dpi)
-        w_pt = img.width * 72 / 300
-        h_pt = img.height * 72 / 300
-        page = doc.new_page(width=w_pt, height=h_pt)
-        sx = w_pt / img.width
-        sy = h_pt / img.height
+        elif plan["type"] == "mixed":
+            # New page: insert pure images at original positions + OCR'd text
+            new_page = out_doc.new_page(width=w, height=h)
 
-        # Insert illustration regions as cropped images from original
-        for region in image_regions:
-            bbox = region["bbox"]
-            cropped = img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
-            buf = io.BytesIO()
-            cropped.save(buf, "PNG", optimize=True)
-            buf.seek(0)
-            rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
-            page.insert_image(rect, stream=buf.getvalue())
+            # Insert preserved illustrations from original
+            for img in plan["images"]:
+                try:
+                    new_page.insert_image(img["bbox"], stream=img["bytes"])
+                except Exception:
+                    pass
 
-        # Insert text as real text on clean background, with detected font style
-        for para in paragraphs:
-            if not para.get("text") or not para.get("bbox"):
-                continue
-            bbox = para["bbox"]
-            rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
-            fontname, fontsize = _detect_font_style(para)
-            try:
-                page.insert_textbox(rect, para["text"], fontsize=fontsize,
-                                     fontname=fontname, align=fitz.TEXT_ALIGN_LEFT)
-            except Exception:
-                page.insert_text((bbox[0] * sx, bbox[3] * sy), para["text"],
-                                  fontsize=fontsize, fontname="helv")
+            # Insert OCR'd text
+            ocr_data = ocr_results.get(page_idx, {})
+            if ocr_data.get("confidence"):
+                total_conf.append(ocr_data["confidence"])
+            for para in ocr_data.get("paragraphs", []):
+                if not para.get("text") or not para.get("bbox"):
+                    continue
+                bbox = para["bbox"]
+                # Scale from 300dpi pixel coords to PDF points
+                sx = w / (src_page.rect.width * 300 / 72)
+                sy = h / (src_page.rect.height * 300 / 72)
+                rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
+                fontname, fontsize = _detect_font_style(para)
+                try:
+                    new_page.insert_textbox(rect, para["text"], fontsize=fontsize,
+                                             fontname=fontname, align=fitz.TEXT_ALIGN_LEFT)
+                except Exception:
+                    pass
 
-    doc.save(output_path, deflate=True, garbage=4)
-    doc.close()
+        else:  # text_only
+            # Pure text page — no images, just OCR'd text on clean background
+            new_page = out_doc.new_page(width=w, height=h)
+
+            # Small pure images (icons, bullets) still get inserted
+            for img in plan["images"]:
+                try:
+                    new_page.insert_image(img["bbox"], stream=img["bytes"])
+                except Exception:
+                    pass
+
+            ocr_data = ocr_results.get(page_idx, {})
+            if ocr_data.get("confidence"):
+                total_conf.append(ocr_data["confidence"])
+            for para in ocr_data.get("paragraphs", []):
+                if not para.get("text") or not para.get("bbox"):
+                    continue
+                bbox = para["bbox"]
+                sx = w / (src_page.rect.width * 300 / 72)
+                sy = h / (src_page.rect.height * 300 / 72)
+                rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
+                fontname, fontsize = _detect_font_style(para)
+                try:
+                    new_page.insert_textbox(rect, para["text"], fontsize=fontsize,
+                                             fontname=fontname, align=fitz.TEXT_ALIGN_LEFT)
+                except Exception:
+                    pass
+
+    src.close()
+    out_doc.save(output_path, deflate=True, garbage=4)
+    out_doc.close()
 
     avg_conf = sum(total_conf) / len(total_conf) if total_conf else 0
     size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-    return {"ok": True, "size_bytes": size, "pages": len(images),
-            "avg_confidence": round(avg_conf, 1), "engine": "tesseract+hybrid"}
+    full_img_pages = sum(1 for p in page_plans if p["type"] == "full_image")
+    mixed_pages = sum(1 for p in page_plans if p["type"] == "mixed")
+    text_pages = sum(1 for p in page_plans if p["type"] == "text_only")
+
+    return {"ok": True, "size_bytes": size, "pages": len(page_plans),
+            "full_image_pages": full_img_pages, "mixed_pages": mixed_pages,
+            "text_pages": text_pages, "avg_confidence": round(avg_conf, 1),
+            "engine": "tesseract+hybrid_v2"}
 
 
 # Map common language codes to Tesseract 3-letter codes
