@@ -227,6 +227,62 @@ def _detect_image_regions(paragraphs: list, page_w: int, page_h: int) -> list:
 
     return regions
 
+def _detect_font_style(paragraph: dict, img=None) -> tuple[str, float]:
+    """Detect font style from OCR paragraph data. Returns (fontname, fontsize).
+    Uses word bbox geometry to classify serif/sans/mono."""
+    bbox = paragraph.get("bbox", [0, 0, 100, 20])
+    words = paragraph.get("words", [])
+    if not words:
+        return "helv", 10  # default sans-serif
+
+    # Estimate font size from bbox height (in PDF points at 72dpi from 300dpi scan)
+    char_height = (bbox[3] - bbox[1]) * 72 / 300
+    fontsize = max(6, min(16, char_height * 0.7))
+
+    # Detect monospace: check if word widths per character are uniform
+    char_widths = []
+    for w in words:
+        if w.get("bbox") and w.get("text") and len(w["text"]) > 0:
+            w_width = w["bbox"][2] - w["bbox"][0]
+            char_widths.append(w_width / len(w["text"]))
+
+    if char_widths and len(char_widths) >= 3:
+        avg_cw = sum(char_widths) / len(char_widths)
+        variance = sum((c - avg_cw) ** 2 for c in char_widths) / len(char_widths)
+        # Monospace: very low variance in character width
+        if variance < (avg_cw * 0.05) ** 2:
+            return "cour", fontsize  # Courier (monospace)
+
+    # Detect bold: thicker strokes = taller relative to width
+    avg_aspect = 0
+    for w in words:
+        if w.get("bbox") and w.get("text"):
+            ww = w["bbox"][2] - w["bbox"][0]
+            wh = w["bbox"][3] - w["bbox"][1]
+            if wh > 0:
+                avg_aspect += ww / wh / max(len(w["text"]), 1)
+    if words:
+        avg_aspect /= len(words)
+
+    # Detect serif vs sans-serif heuristic:
+    # Serif fonts tend to have more width variation between characters
+    # and slightly wider average character width relative to height
+    if char_widths and len(char_widths) >= 3:
+        avg_cw = sum(char_widths) / len(char_widths)
+        cv = (sum((c - avg_cw) ** 2 for c in char_widths) / len(char_widths)) ** 0.5 / max(avg_cw, 1)
+        # Higher coefficient of variation = more likely serif
+        if cv > 0.25:
+            # Serif
+            if avg_aspect > 0.7:
+                return "tibo", fontsize  # Times Bold
+            return "tiro", fontsize  # Times Roman (serif)
+
+    # Default: sans-serif
+    if avg_aspect > 0.7:
+        return "hebo", fontsize  # Helvetica Bold
+    return "helv", fontsize  # Helvetica (sans-serif)
+
+
 def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
                     pages: str = "") -> dict:
     """Hybrid OCR: real text on clean background + preserved illustrations.
@@ -286,16 +342,16 @@ def ocr_pdf_hybrid(pdf_path: str, output_path: str, language: str = "eng",
             rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
             page.insert_image(rect, stream=buf.getvalue())
 
-        # Insert text as real text on clean background
+        # Insert text as real text on clean background, with detected font style
         for para in paragraphs:
             if not para.get("text") or not para.get("bbox"):
                 continue
             bbox = para["bbox"]
             rect = fitz.Rect(bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy)
-            fontsize = max(7, min(12, (bbox[3] - bbox[1]) * sy * 0.65))
+            fontname, fontsize = _detect_font_style(para)
             try:
                 page.insert_textbox(rect, para["text"], fontsize=fontsize,
-                                     fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+                                     fontname=fontname, align=fitz.TEXT_ALIGN_LEFT)
             except Exception:
                 page.insert_text((bbox[0] * sx, bbox[3] * sy), para["text"],
                                   fontsize=fontsize, fontname="helv")
